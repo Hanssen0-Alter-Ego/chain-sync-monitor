@@ -1,0 +1,56 @@
+[monitor]
+host = "127.0.0.1"
+port = 8080
+interval_seconds = 15
+timeout_seconds = 4
+
+[networks.mainnet.ckb]
+url = "http://127.0.0.1:8114"
+
+[networks.mainnet.btc]
+url = "http://127.0.0.1:8332"
+username = "monitor"
+password_file = "btc-mainnet.password"
+
+[networks.mainnet.spv]
+url = "http://127.0.0.1:8888"
+# Optional: uncomment and set all three fields to track on-chain progress.
+# [networks.mainnet.spv.type_script]
+# code_hash = "0x..."
+# hash_type = "type"
+# args = "0x..."
+
+[networks.testnet3.ckb]
+url = "http://127.0.0.1:8116"
+
+[networks.testnet3.btc]
+url = "http://127.0.0.1:18332"
+username = "monitor"
+password_file = "btc-testnet3.password"
+
+[networks.testnet3.blockbook]
+url = "http://127.0.0.1:19130/api/"
+
+[networks.testnet3.spv]
+url = "http://127.0.0.1:8889"
+# [networks.testnet3.spv.type_script]
+# code_hash = "0x..."
+# hash_type = "type"
+# args = "0x..."
+
+# Optional services: add when they are reachable from the monitor.
+# [networks.mainnet.blockbook]
+# url = "http://127.0.0.1:19131/api/"
+#
+# [networks.mainnet.ckbadger]
+# url = "http://127.0.0.1:8100/api/v1/statistics/network"
+#
+# If you run a separate testnet endpoint, configure it the same way.
+# [networks.testnet3.ckbadger]
+# url = "http://127.0.0.1:8101/api/v1/statistics/network"
+#
+# Repeat this array table with a different stable ID for each HTTP-only probe.
+# [[networks.testnet3.http]]
+# id = "btc-asset-api"
+# label = "BTC Asset API"
+# url = "http://127.0.0.1:3000/healthcheck"

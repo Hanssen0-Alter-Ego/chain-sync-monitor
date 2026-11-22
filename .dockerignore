@@ -1,0 +1,8 @@
+**
+!Dockerfile
+!monitor.py
+!spv_probe.py
+!static/
+!static/**
+!extras_probe.py
+!history_store.py

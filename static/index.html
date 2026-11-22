@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>链同步监控</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="page-header">
+      <div>
+        <p class="eyebrow">CHAIN SYNC MONITOR</p>
+        <h1>链同步监控</h1>
+      </div>
+      <div class="toolbar">
+        <p class="freshness" id="freshness" aria-live="polite"><span class="dot"></span><span id="freshness-text">等待数据</span></p>
+        <button type="button" id="refresh">立即刷新</button>
+      </div>
+    </header>
+    <p class="subtitle">Bitcoin、CKB 及索引服务的同步状态</p>
+    <p id="notice" class="notice" role="status" hidden></p>
+    <div id="networks"></div>
+    <template id="network-template">
+      <section class="network">
+        <header class="network-header">
+          <span class="network-code" aria-hidden="true"></span>
+          <h2></h2>
+          <span class="network-summary"></span>
+        </header>
+        <div class="cards"></div>
+      </section>
+    </template>
+    <template id="service-template">
+      <article class="card">
+        <header class="card-header">
+          <div>
+            <p class="kind"></p>
+            <h3></h3>
+          </div>
+          <span class="state"><span class="dot"></span><span class="state-label"></span></span>
+        </header>
+        <div class="progress-group" hidden>
+          <div class="progress-label"><span>同步进度</span><span class="progress-value"></span></div>
+          <progress max="1" aria-label="同步进度"></progress>
+        </div>
+        <dl class="metrics"></dl>
+        <div class="availability" hidden>
+          <p class="availability-title" title="按探测样本计算，与链同步进度无关">探测可用率</p>
+          <dl class="availability-windows"></dl>
+        </div>
+        <p class="note" hidden></p>
+      </article>
+    </template>
+  </main>
+</body>
+</html>

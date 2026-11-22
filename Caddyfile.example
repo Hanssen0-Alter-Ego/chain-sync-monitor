@@ -1,0 +1,4 @@
+# Replace monitor.example.com with your dashboard domain.
+monitor.example.com {
+    reverse_proxy 127.0.0.1:8080
+}

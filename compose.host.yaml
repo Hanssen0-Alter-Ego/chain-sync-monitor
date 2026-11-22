@@ -1,0 +1,6 @@
+# Linux only: reach RPCs bound to the host loopback without republishing them.
+services:
+  monitor:
+    network_mode: host
+    ports: !reset []
+    command: ["python", "-B", "monitor.py", "--config", "/config/config.toml", "--host", "127.0.0.1", "--port", "8080", "--history", "/data/history.sqlite3"]
