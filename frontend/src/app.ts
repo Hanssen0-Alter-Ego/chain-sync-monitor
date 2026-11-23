@@ -1,4 +1,15 @@
-"use strict";
+import type { Availability, Service, Snapshot } from "../../shared/status.js";
+
+declare global {
+  interface Window { CHAIN_SYNC_MONITOR_API_URL?: string }
+}
+const statusUrl = window.CHAIN_SYNC_MONITOR_API_URL || "/api/status";
+
+function element<T extends Element = HTMLElement>(parent: ParentNode, selector: string): T {
+  const match = parent.querySelector<T>(selector);
+  if (!match) throw new Error("Missing dashboard element: " + selector);
+  return match;
+}
 
 const networks = [
   { id: "mainnet", label: "主网" },
@@ -13,33 +24,33 @@ const states = {
   offline: "离线",
   unknown: "未知",
 };
-const networkContainer = document.querySelector("#networks");
-const networkTemplate = document.querySelector("#network-template");
-const serviceTemplate = document.querySelector("#service-template");
-const freshness = document.querySelector("#freshness");
-const freshnessText = document.querySelector("#freshness-text");
-const notice = document.querySelector("#notice");
-const refreshButton = document.querySelector("#refresh");
+const networkContainer = element(document, "#networks");
+const networkTemplate = element<HTMLTemplateElement>(document, "#network-template");
+const serviceTemplate = element<HTMLTemplateElement>(document, "#service-template");
+const freshness = element(document, "#freshness");
+const freshnessText = element(document, "#freshness-text");
+const notice = element(document, "#notice");
+const refreshButton = element<HTMLButtonElement>(document, "#refresh");
 const numberFormat = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 6 });
 const percentFormat = new Intl.NumberFormat("zh-CN", { style: "percent", maximumFractionDigits: 2 });
 const timeFormat = new Intl.DateTimeFormat("zh-CN", { dateStyle: "short", timeStyle: "medium" });
 
-let snapshot = null;
+let snapshot: Snapshot | null = null;
 let interval = 30;
 let pending = false;
 let failure = false;
-let timer;
+let timer: number | undefined;
 
-function render(snap) {
+function render(snap: Snapshot | null) {
   const fragment = document.createDocumentFragment();
   for (const network of networks) {
-    const section = networkTemplate.content.cloneNode(true);
-    section.querySelector(".network").dataset.network = network.id;
-    section.querySelector(".network-code").textContent = network.id.toUpperCase();
-    section.querySelector("h2").textContent = network.label;
-    const cards = section.querySelector(".cards");
+    const section = networkTemplate.content.cloneNode(true) as DocumentFragment;
+    element(section, ".network").dataset.network = network.id;
+    element(section, ".network-code").textContent = network.id.toUpperCase();
+    element(section, "h2").textContent = network.label;
+    const cards = element(section, ".cards");
     const services = snap?.services.filter((record) => record?.network === network.id) ?? [];
-    section.querySelector(".network-summary").textContent = services.length
+    element(section, ".network-summary").textContent = services.length
       ? `${services.filter(({ state }) => state === "synced" || state === "online").length} / ${services.length} 正常`
       : "";
     for (const service of services) {
@@ -56,22 +67,36 @@ function render(snap) {
   networkContainer.replaceChildren(fragment);
 }
 
-function makeCard(service) {
-  const card = serviceTemplate.content.cloneNode(true);
+function makeCard(service: Service) {
+  const card = serviceTemplate.content.cloneNode(true) as DocumentFragment;
   const state = Object.hasOwn(states, service.state) ? service.state : "unknown";
-  card.querySelector(".kind").textContent = Object.hasOwn(kinds, service.kind)
+  element(card, ".kind").textContent = Object.hasOwn(kinds, service.kind)
     ? kinds[service.kind] : "SERVICE";
-  card.querySelector("h3").textContent = service.label || service.id || "未命名服务";
-  card.querySelector(".state").dataset.state = state;
-  card.querySelector(".state-label").textContent = states[state];
+  const heading = element(card, "h3");
+  heading.textContent = service.label || service.id || "未命名服务";
+  if (typeof service.publicUrl === "string") {
+    try {
+      const target = new URL(service.publicUrl);
+      if (["https:", "http:"].includes(target.protocol) && !target.username && !target.password) {
+        const link = document.createElement("a");
+        link.textContent = heading.textContent;
+        link.href = target.href;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        heading.replaceChildren(link);
+      }
+    } catch { /* invalid links are not rendered */ }
+  }
+  element(card, ".state").dataset.state = state;
+  element(card, ".state-label").textContent = states[state];
   if (typeof service.progress === "number" && Number.isFinite(service.progress)
       && service.progress >= 0 && service.progress <= 1) {
-    card.querySelector(".progress-group").hidden = false;
-    card.querySelector("progress").value = service.progress;
-    card.querySelector(".progress-value").textContent =
+    element(card, ".progress-group").hidden = false;
+    element<HTMLProgressElement>(card, "progress").value = service.progress;
+    element(card, ".progress-value").textContent =
       service.progress < 1 && service.progress >= 0.99995 ? "<100%" : percentFormat.format(service.progress);
   }
-  const metrics = card.querySelector(".metrics");
+  const metrics = element(card, ".metrics");
   for (const metric of Array.isArray(service.metrics) ? service.metrics : []) {
     if (!metric || typeof metric.label !== "string") continue;
     const row = document.createElement("div");
@@ -93,18 +118,18 @@ function makeCard(service) {
   }
   renderAvailability(card, service.availability);
   if (typeof service.note === "string" && service.note) {
-    const note = card.querySelector(".note");
+    const note = element(card, ".note");
     note.textContent = service.note;
     note.hidden = false;
   }
   return card;
 }
 
-function renderAvailability(card, availability) {
+function renderAvailability(card: DocumentFragment, availability: Availability) {
   if (!Array.isArray(availability?.windows)) return;
-  const area = card.querySelector(".availability");
-  const list = area.querySelector(".availability-windows");
-  for (const [seconds, label] of [[86400, "24 小时"], [604800, "7 天"]]) {
+  const area = element(card, ".availability");
+  const list = element(area, ".availability-windows");
+  for (const [seconds, label] of [[86400, "24 小时"], [604800, "7 天"]] as const) {
     const sample = availability.windows.find((item) => item?.seconds === seconds);
     if (!sample) continue;
     const row = document.createElement("div");
@@ -156,7 +181,7 @@ async function loadStatus() {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 10000);
   try {
-    const response = await fetch("/api/status", { cache: "no-store", signal: controller.signal });
+    const response = await fetch(statusUrl, { cache: "no-store", signal: controller.signal, credentials: "same-origin" });
     if (!response.ok) throw new Error("Status request failed");
     const data = await response.json();
     if (!data || !Array.isArray(data.services)) throw new Error("Invalid status");

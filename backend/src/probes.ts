@@ -1,0 +1,243 @@
+import { type Metric, type Network, type Reading, type State } from "../../shared/status.js";
+import { record, type Endpoint } from "./config.js";
+import { ProbeError, RpcError, readJson, rpc, statusOnly } from "./http.js";
+
+const btcChains: Record<Network, string[]> = { mainnet: ["main"], testnet3: ["test", "testnet3"] };
+const btcHash = /^[0-9a-f]{64}$/i;
+const ckbHash = /^0x[0-9a-f]{64}$/i;
+
+export function nat(value: unknown, ckb = false): number | undefined {
+  if (ckb && typeof value === "string" && /^0x[0-9a-f]{1,16}$/i.test(value)) value = Number(value);
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+export function fraction(value: unknown) {
+  return typeof value === "number" && value >= 0 && value <= 1 ? value : undefined;
+}
+export function metric(label: string, value: Metric["value"], unit?: string): Metric { return { label, value, unit }; }
+export function reading(state: State, metrics: Metric[] = [], note?: string, progress?: number): Reading {
+  return { state, metrics, note, progress };
+}
+export interface BitcoinTip { height: number; headers: number; hash?: string; synced: boolean }
+export interface Observation {
+  reading: Reading;
+  available: boolean;
+  tip?: BitcoinTip;
+}
+export type BaseProbe = Observation | { book: Record<string, unknown>; backend: Record<string, unknown>; available: boolean };
+
+async function bitcoin(network: Network, endpoint: Endpoint, timeout: number): Promise<Observation> {
+  let info;
+  try { info = record(await rpc(endpoint, timeout, "getblockchaininfo", [], true)); }
+  catch (error) {
+    if (error instanceof RpcError && error.code === -28) {
+      return { reading: reading("syncing", [], "Bitcoin Core 正在启动或加载数据。"), available: true };
+    }
+    throw error;
+  }
+  if (!info || typeof info.chain !== "string") throw new ProbeError("Bitcoin Core 未返回有效链信息。");
+  if (!btcChains[network].includes(info.chain)) {
+    return { reading: reading("degraded", [], "Bitcoin Core 返回的网络与配置不符。"), available: false };
+  }
+  const height = nat(info.blocks), headers = nat(info.headers), ibd = info.initialblockdownload;
+  if (height === undefined || headers === undefined || height > headers || typeof ibd !== "boolean") {
+    throw new ProbeError("Bitcoin Core 未返回有效的区块高度、头高度或 IBD 状态。");
+  }
+  const hash = typeof info.bestblockhash === "string" && btcHash.test(info.bestblockhash)
+    ? info.bestblockhash.toLowerCase() : undefined;
+  const rows = [metric("已验证区块高度", height), metric("区块头高度", headers), metric("落后区块头", headers - height, "块")];
+  const stamp = new Date((nat(info.time) ?? 0) * 1000);
+  if (stamp.getTime()) rows.push(metric("最新区块时间", stamp.toISOString()));
+  const synced = !ibd && headers === height;
+  return {
+    reading: reading(synced ? "synced" : "syncing", rows,
+      "按本节点所见的区块头判断，不代表已核对外部网络高度。", fraction(info.verificationprogress)),
+    available: true, tip: { height, headers, hash, synced },
+  };
+}
+async function ckb(endpoint: Endpoint, timeout: number): Promise<Observation> {
+  const sync = async () => {
+    const result = record(await rpc(endpoint, timeout, "sync_state"));
+    const height = nat(result?.tip_number, true);
+    if (!result || height === undefined || typeof result.ibd !== "boolean") throw new ProbeError("同步状态格式不匹配。");
+    return { result, height, ibd: result.ibd };
+  };
+  const indexer = async () => {
+    const data = await rpc(endpoint, timeout, "get_indexer_tip");
+    if (data === null) return undefined;
+    const result = record(data);
+    const height = nat(result?.block_number, true);
+    if (!result || height === undefined) throw new ProbeError("索引器高度格式不匹配。");
+    return { result, height };
+  };
+  const [syncResult, indexResult] = await Promise.allSettled([sync(), indexer()]);
+  const s = syncResult.status === "fulfilled" ? syncResult.value : undefined;
+  const i = indexResult.status === "fulfilled" ? indexResult.value : undefined;
+  const errors = [syncResult, indexResult].flatMap((result, at) => {
+    if (result.status !== "rejected") return [];
+    const error: unknown = result.reason;
+    return [{ offline: error instanceof ProbeError && error.state === "offline",
+      note: `${at === 0 ? "sync_state" : "get_indexer_tip"}：${error instanceof ProbeError ? error.note : "检查失败。"}` }];
+  });
+  const rows: Metric[] = [];
+  const best = nat(s?.result.best_known_block_number, true);
+  if (s) {
+    rows.push(metric("节点区块高度", s.height));
+    if (best !== undefined) rows.push(metric("已知区块高度", best));
+    const unverified = nat(s.result.unverified_tip_number, true);
+    if (unverified !== undefined) rows.push(metric("未验证区块高度", unverified));
+    const inflight = nat(s.result.inflight_blocks_count, true);
+    if (inflight !== undefined) rows.push(metric("下载中", inflight, "块"));
+  }
+  if (i) rows.push(metric("索引器高度", i.height));
+  if (s && i) {
+    rows.push(metric("索引器落后", Math.max(0, s.height - i.height), "块"));
+    const actual = s.result.tip_hash, indexed = i.result.block_hash;
+    if (s.height === i.height && typeof actual === "string" && typeof indexed === "string"
+        && ckbHash.test(actual) && ckbHash.test(indexed) && actual.toLowerCase() !== indexed.toLowerCase()) {
+      return { reading: reading("degraded", rows, "节点和索引器在同一高度报告了不同区块。"), available: true };
+    }
+  }
+  if (errors.length) {
+    return {
+      reading: reading(errors.length === 2 && errors.every((error) => error.offline) ? "offline" : "degraded",
+        rows, errors.map((error) => error.note).join(" ")),
+      available: !!s,
+    };
+  }
+  if (!i) return { reading: reading("syncing", rows, "索引器还没有返回区块高度。"), available: true };
+  const syncing = s && (s.ibd || (best !== undefined && s.height < best) || i.height < s.height);
+  return { reading: reading(syncing ? "syncing" : "synced", rows), available: true };
+}
+async function blockbook(network: Network, endpoint: Endpoint, timeout: number): Promise<BaseProbe> {
+  const base = endpoint.url.replace(/\/+$/, "");
+  const { data } = await readJson(base + (new URL(base).pathname.endsWith("/api") ? "/" : "/api/"), timeout);
+  const answer = record(data), book = record(answer?.blockbook), backend = record(answer?.backend) ?? {};
+  if (!book) throw new ProbeError("Blockbook 未返回有效状态。");
+  return { book, backend, available: (backend.chain == null || typeof backend.chain === "string" && btcChains[network].includes(backend.chain))
+      && nat(book.bestHeight) !== undefined && typeof book.inSync === "boolean" && typeof book.inSyncMempool === "boolean" };
+}
+export function compareBlockbook(network: Network, book: Record<string, unknown>, backend: Record<string, unknown>,
+  tip?: BitcoinTip): { result: Reading; height?: number } {
+  const height = nat(book.bestHeight), chainSync = book.inSync, mempoolSync = book.inSyncMempool;
+  const rows = height === undefined ? [] : [metric("索引高度", height)];
+  const done = (state: State, note: string, progress?: number) => ({ result: reading(state, rows, note, progress), height });
+  if (typeof chainSync === "boolean") rows.push(metric("链同步", chainSync ? "是" : "否"));
+  if (typeof mempoolSync === "boolean") rows.push(metric("内存池同步", mempoolSync ? "是" : "否"));
+  if (typeof backend.chain === "string" && !btcChains[network].includes(backend.chain)) {
+    return done("degraded", "Blockbook 后端返回的 Bitcoin 网络与配置不符。");
+  }
+  if (backend.error) return done("degraded", "Blockbook 报告 Bitcoin 后端异常。");
+  if (typeof chainSync !== "boolean" || typeof mempoolSync !== "boolean") {
+    return done("unknown", "Blockbook REST 尚未报告足够的同步状态。");
+  }
+  const hash = backend.bestBlockHash;
+  if (tip && height !== undefined) {
+    rows.push(metric("配置的 Core 高度", tip.height), metric("落后 Core", Math.max(tip.height - height, 0), "块"));
+    if (nat(backend.blocks) === tip.height && tip.hash && typeof hash === "string" && btcHash.test(hash) && hash.toLowerCase() !== tip.hash) {
+      return done("degraded", "Blockbook 所连节点与配置的 Core 同高度区块哈希不同。");
+    }
+  }
+  if (book.initialSync === true || !chainSync || !mempoolSync || (tip && height !== undefined && height < tip.height)) {
+    return done("syncing", "以 Blockbook REST 报告为准；全量索引时高度可能不会持续刷新。",
+      height !== undefined && tip?.headers ? Math.min(1, height / tip.headers) : undefined);
+  }
+  if (height === undefined || !tip?.synced) return done("unknown", "Blockbook 自报已同步，尚无同步的 Bitcoin Core 高度可核对。");
+  if (height > tip.height) return done("degraded", "Blockbook 索引高度高于配置的 Core，请核对两者的后端。");
+  return done("synced", "同步标记正常，索引高度与配置的 Core 一致。");
+}
+function ckbadger(payload: unknown) {
+  const data = record(payload), sync = record(data?.syncStatus);
+  const height = nat(sync?.syncedBlock), target = nat(sync?.tipBlock);
+  if (!sync || height === undefined || target === undefined) throw new ProbeError("CKBadger 未返回有效的网络同步状态。");
+  const rows = [metric("索引高度", height), metric("CKB 目标高度", target)];
+  if (record(data?.deepForkStatus)?.detected === true) return reading("degraded", rows, "CKBadger 报告深度分叉。");
+  if (height > target) return reading("unknown", rows, "目标高度低于索引高度，暂时无法比较。");
+  const lag = target - height;
+  rows.push(metric("落后", lag, "块"));
+  const mode = sync.syncMode;
+  if (mode === "bulk" || mode === "normal" || mode === "synced") rows.push(metric("索引模式", mode));
+  return reading(sync.isSyncing === true || lag ? "syncing" : sync.isSyncing === false && target > 0 ? "synced" : "unknown",
+    rows, undefined, target ? height / target : undefined);
+}
+export async function inspectOnchain(scriptValue: unknown, ckb: Endpoint | undefined, btc: BitcoinTip | undefined,
+  timeout: number, live: Reading): Promise<Reading> {
+  if (scriptValue === undefined) return { ...live, note: "RPC 在线；配置 type_script 可查看链上 SPV 高度。" };
+  if (!ckb) return { ...live, note: "RPC 在线；请配置 CKB 端点以核对链上 SPV 高度。" };
+  const script = record(scriptValue);
+  if (!script || typeof script.code_hash !== "string" || !ckbHash.test(script.code_hash)
+      || typeof script.args !== "string" || !/^0x[0-9a-f]{68}$/i.test(script.args)
+      || !["type", "data", "data1", "data2"].includes(String(script.hash_type))) {
+    return { ...live, state: "degraded", note: "SPV type_script 无效（要求 32 字节 code hash 和 34 字节 args）。" };
+  }
+  const {code_hash, hash_type, args} = script;
+  try {
+    const page = record(await rpc(ckb, timeout, "get_cells", [
+      { script: {code_hash, hash_type, args}, script_type: "type", script_search_mode: "exact", with_data: true },
+      "asc", "0x101",
+    ]));
+    if (!Array.isArray(page?.objects) || page.objects.length > 256) throw new ProbeError("链上 SPV 查询未返回有效结果。");
+    const ids: number[] = [];
+    const clients = new Map<number, [number, number]>();
+    for (const object of page.objects as unknown[]) {
+      const data = record(object)?.output_data;
+      if (typeof data !== "string" || !/^0x(?:[0-9a-f]{2})+$/i.test(data)) throw new ProbeError("链上 SPV Cell 格式无效。");
+      const bytes = Buffer.from(data.slice(2), "hex");
+      if (bytes.length === 1) ids.push(bytes[0]);
+      else if (bytes.length === 113 && !clients.has(bytes[0])) clients.set(bytes[0], [bytes.readUInt32LE(33), bytes.readUInt32LE(37)]);
+      else throw new ProbeError("出现未知或重复的 SPV Cell。");
+    }
+    const active = clients.get(ids[0]);
+    if (ids.length !== 1 || clients.size !== parseInt(args.slice(66, 68), 16) || !active || active[0] > active[1]) {
+      throw new ProbeError("SPV 实例在 CKB 索引器中尚未完整可见。");
+    }
+    const [first, tip] = active;
+    const metrics = [...live.metrics, metric("链上 SPV 高度", tip), metric("起始 BTC 高度", first), metric("SPV 客户端数", clients.size)];
+    const note = "SPV RPC 未提供本地缓存高度。";
+    if (!btc || btc.height < tip) return reading("unknown", metrics, note + " 暂无可比对的 BTC 高度。");
+    const lag = btc.height - tip;
+    metrics.push(metric("本地 BTC 高度", btc.height), metric("SPV 落后", lag, "块"));
+    return reading(lag ? "syncing" : btc.synced ? "synced" : "unknown", metrics, note,
+      btc.height > first ? (tip - first) / (btc.height - first) : undefined);
+  } catch (error) {
+    return { ...live, state: "degraded", note: "RPC 在线；链上检查未成功。" + (error instanceof ProbeError ? error.note : "") };
+  }
+}
+export async function probe(network: Network, endpoint: Endpoint, timeout: number): Promise<BaseProbe> {
+  try {
+    switch (endpoint.kind) {
+      case "btc": return await bitcoin(network, endpoint, timeout);
+      case "ckb": return await ckb(endpoint, timeout);
+      case "blockbook": return await blockbook(network, endpoint, timeout);
+      case "ckbadger": {
+        const { status, data } = await readJson(endpoint.url, timeout, { extra: [503] });
+        if (status === 503) {
+          if (record(data)?.error === "initializing") return { reading: reading("syncing", [], "CKBadger 正在初始化索引。"), available: false };
+          throw new ProbeError("CKBadger 返回 HTTP 503。");
+        }
+        return { reading: ckbadger(data), available: true };
+      }
+      case "http": {
+        const {status, ms} = await statusOnly(endpoint.url, timeout);
+        const available = status >= 200 && status < 300;
+        return { reading: reading(available ? "online" : "degraded", [metric("HTTP 状态", status), metric("响应时间", ms, "ms")],
+          available ? undefined : "HTTP 探测要求 2xx，不跟随重定向。"), available };
+      }
+      case "spv": {
+        try { await rpc(endpoint, timeout, "getTxProof"); }
+        catch (error) {
+          if (error instanceof RpcError && error.code === -32602) {
+            return { reading: reading("unknown", [metric("证明 RPC", "在线")], "仅验证 RPC 可达，不能据此判断链上同步。"), available: true };
+          }
+          if (error instanceof RpcError && error.code === -32601) {
+            return { reading: reading("degraded", [metric("RPC", "在线")], "端点未公开 getTxProof。"), available: false };
+          }
+          throw error;
+        }
+        return { reading: reading("unknown", [metric("RPC", "在线")], "端点未按预期拒绝空参数；同步仍未经验证。"), available: false };
+      }
+    }
+  } catch (error) {
+    return { reading: error instanceof ProbeError ? reading(error.state, [], error.note)
+      : reading("degraded", [], "检查失败，未能取得有效数据。"), available: false };
+  }
+}

@@ -140,3 +140,8 @@ dd { margin: 0; font: 600 12px/1.4 var(--mono); text-align: right; overflow-wrap
 .availability-windows > div { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
 .availability-windows dt, .availability-windows dd { font-size: 11px; }
 .availability .sample-count { color: var(--muted); font: 10px/1.4 var(--mono); white-space: nowrap; }
+
+.card h3 a {
+  color: inherit;
+  text-underline-offset: 0.22em;
+}

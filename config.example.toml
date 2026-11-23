@@ -3,6 +3,8 @@ host = "127.0.0.1"
 port = 8080
 interval_seconds = 15
 timeout_seconds = 4
+# For a separate web frontend, add its exact origin (no path).
+# cors_origins = ["https://status.example.com"]
 
 [networks.mainnet.ckb]
 url = "http://127.0.0.1:8114"
@@ -43,11 +45,12 @@ url = "http://127.0.0.1:8889"
 # url = "http://127.0.0.1:19131/api/"
 #
 # [networks.mainnet.ckbadger]
-# url = "http://127.0.0.1:8100/api/v1/statistics/network"
+# url = "http://127.0.0.1:8100/api/mainnet/v1/statistics/network"
+# public_url = "https://explorer.example.com/"
 #
-# If you run a separate testnet endpoint, configure it the same way.
+# For standalone CKBadger (one server per network), use /api/v1/statistics/network.
 # [networks.testnet3.ckbadger]
-# url = "http://127.0.0.1:8101/api/v1/statistics/network"
+# url = "http://127.0.0.1:8100/api/testnet/v1/statistics/network"
 #
 # Repeat this array table with a different stable ID for each HTTP-only probe.
 # [[networks.testnet3.http]]
