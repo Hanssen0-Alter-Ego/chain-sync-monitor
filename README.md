@@ -51,7 +51,7 @@ Copy the block from [Caddyfile.example](Caddyfile.example) into your host's Cadd
 - **CKB:** verified tip vs best known header, unverified tip, and built-in indexer height. Enable the `Net` and `Indexer` RPC modules for all metrics.
 - **BTC:** validated blocks, headers, verification estimate and initial block download status.
 - **Blockbook:** index height and sync flag from `/api/`, compared to its Bitcoin backend. During bulk import, the reported height can lag; no log-based estimate is presented as committed progress.
-- **SPV:** proof RPC responsiveness is not proof availability. To track on-chain progress, configure the full instance **type script** (`code_hash`, `hash_type`, `args`) from a client or info output in the SPV initialization transaction. Do not paste the hash of that script instead. The monitor reads the active client selected by the info cell through CKB's indexer. The existing SPV RPC does not expose its local cache tip. SPV lag is relative to the configured local BTC node, not to an external chain tip.
+- **SPV:** Where `getSyncStatus` is supported, the monitor shows cached Bitcoin tip, local header tip, and last confirmed on-chain client, with observation times if available. Cached reports do not independently verify sync. Optionally configure the full instance **type script** (`code_hash`, `hash_type`, `args`), not its hash, to verify the on-chain client through the CKB indexer. Configured Bitcoin Core heights take precedence. Older proof endpoints continue to work.
 
 - **CKBadger:** query `/api/mainnet/v1/statistics/network` and `/api/testnet/v1/statistics/network` for a shared frontend, or `/api/v1/statistics/network` for a standalone instance, to get indexed/target heights and deep-fork status. Startup `503 initializing` shows as syncing but does not count as available until the endpoint returns usable data.
 
@@ -66,3 +66,5 @@ The 24-hour and 7-day figures are successful probes divided by observed probes, 
 Node.js 24 and npm are required. Run `npm ci` and `npm test` to build the frontend and backend and run integration tests against local stubbed upstreams. `npm run build:frontend` builds just the static site; `npm run build:backend` builds just the monitor. To run locally after `npm run build`: `npm start -- --config config/config.toml`. Pull requests test and build the container without publishing. Pushes to `main` test then publish `latest` and a commit tag to GHCR.
 
 Once the GHCR image is public, replace `up -d --build` with `pull` followed by `up -d --no-build` using the same Compose files.
+
+Built-in GitHub icons link to upstream repositories. Set `github_url = "https://github.com/owner/repo"` on a custom HTTP check to add an icon, separate from `public_url`.

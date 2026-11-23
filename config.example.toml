@@ -58,4 +58,5 @@ url = "http://127.0.0.1:8889"
 # [[networks.testnet3.http]]
 # id = "btc-asset-api"
 # label = "BTC Asset API"
+# github_url = "https://github.com/RGBPlusPlus/btc-assets-api"
 # url = "http://127.0.0.1:3000/healthcheck"

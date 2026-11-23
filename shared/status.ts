@@ -6,6 +6,7 @@ export interface Metric {
   label: string;
   value: number | string;
   unit?: string;
+  observedAt?: string;
 }
 export interface Reading {
   state: State;
@@ -22,6 +23,7 @@ export interface Service extends Reading {
   network: Network;
   kind: Kind;
   publicUrl?: string;
+  githubUrl?: string;
   probeAvailable?: boolean | null;
   availability: Availability;
 }

@@ -11,6 +11,7 @@ export const labels: Record<Exclude<Kind, "http">, string> = {
 export interface Endpoint {
   url: string;
   publicUrl?: string;
+  githubUrl?: string;
   authorization?: string;
   label: string;
   kind: Kind;
@@ -59,6 +60,14 @@ function httpUrl(value: unknown, field: string, publicUrl = false) {
     } catch { /* keep the error free of raw URLs */ }
   }
   throw new ConfigError(`${field} 必须是无内嵌凭据的 HTTP(S) URL。`);
+}
+function githubRepository(value: unknown, field: string) {
+  if (typeof value === "string" && !/\s/.test(value) &&
+      /^https:\/\/github\.com\/[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\/[A-Za-z0-9_.-]{1,100}\/?$/.test(value)) {
+    const url = new URL(value);
+    if (url.pathname.split("/").filter(Boolean).length === 2) return url.href.replace(/\/$/, "");
+  }
+  throw new ConfigError(`${field} 必须是 HTTPS GitHub 仓库地址。`);
 }
 function origin(value: unknown) {
   const url = new URL(httpUrl(value, "monitor.cors_origins"));
@@ -152,6 +161,7 @@ export function loadConfig(path: string): Config {
       endpoints[net].set("http:" + id, {
         kind: "http", label: label.trim(), url: httpUrl(service.url, field + ".url"),
         publicUrl: service.public_url === undefined ? undefined : httpUrl(service.public_url, field + ".public_url", true),
+        githubUrl: service.github_url === undefined ? undefined : githubRepository(service.github_url, field + ".github_url"),
       });
     }
   }

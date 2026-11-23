@@ -1,4 +1,4 @@
-import { currentProbe, keySyncMetric, probeTotals, uptimeDay } from "./presentation.js";
+import { currentProbe, probeTotals, projectRepository, syncComparisons, uptimeDay } from "./presentation.js";
 import { dashboardLanguage, translate } from "./i18n.js";
 import type { Availability, Service, Snapshot } from "../../shared/status.js";
 
@@ -63,7 +63,6 @@ function render(snap: Snapshot | null) {
   for (const network of networks) {
     const section = networkTemplate.content.cloneNode(true) as DocumentFragment;
     element(section, ".network").dataset.network = network.id;
-    element(section, ".network-code").textContent = network.id.toUpperCase();
     element(section, "h2").textContent = t(network.label);
     const cards = element(section, ".cards");
     const services = snap?.services.filter((record) => record?.network === network.id) ?? [];
@@ -95,12 +94,14 @@ function render(snap: Snapshot | null) {
 function makeCard(service: Service) {
   const card = serviceTemplate.content.cloneNode(true) as DocumentFragment;
   const state = Object.hasOwn(states, service.state) ? service.state : "unknown";
-  element(card, ".kind").textContent = Object.hasOwn(kinds, service.kind)
-    ? kinds[service.kind] : "SERVICE";
+  const kind = element(card, ".kind");
+  kind.hidden = service.kind === "http";
+  kind.textContent = Object.hasOwn(kinds, service.kind) ? kinds[service.kind] : "";
   const heading = element(card, "h3");
   heading.textContent = service.label
     ? service.kind === "http" ? service.label : t(service.label)
     : service.id || t("未命名服务");
+  const serviceName = heading.textContent;
   if (typeof service.publicUrl === "string") {
     try {
       const target = new URL(service.publicUrl);
@@ -113,6 +114,14 @@ function makeCard(service: Service) {
         heading.replaceChildren(link);
       }
     } catch { /* invalid links are not rendered */ }
+  }
+  const repository = projectRepository(service);
+  const github = element<HTMLAnchorElement>(card, ".github-link");
+  if (repository) {
+    github.hidden = false;
+    github.href = repository;
+    github.title = t("GitHub 仓库");
+    github.setAttribute("aria-label", `${serviceName} · ${t("GitHub 仓库")}`);
   }
   const probe = currentProbe(service);
   const probeState = element(card, ".probe-state");
@@ -150,6 +159,7 @@ function makeCard(service: Service) {
     row.append(key, value);
     metrics.append(row);
   }
+  renderUptime(card, service);
   renderAvailability(card, service.availability);
   if (typeof service.note === "string" && service.note) {
     const note = element(card, ".note");
@@ -160,38 +170,69 @@ function makeCard(service: Service) {
 }
 
 function renderCharts(card: DocumentFragment, service: Service) {
-  const syncTrack = element(card, ".progress-group");
-  const syncTitle = element(card, ".progress-title");
-  const syncValue = element(card, ".progress-value");
-  const progress = element<HTMLProgressElement>(card, "progress");
-  progress.hidden = true;
-  if (service.kind !== "http") {
-    syncTrack.hidden = false;
-    syncTitle.textContent = t("同步进度");
-    if (typeof service.progress === "number" && Number.isFinite(service.progress)
-        && service.progress >= 0 && service.progress <= 1) {
-      progress.hidden = false;
-      progress.value = service.progress;
-      progress.setAttribute("aria-label", t("同步进度"));
-      const formatted = displayPercent(service.progress);
-      progress.setAttribute("aria-valuetext", formatted);
-      syncValue.textContent = formatted;
-    } else {
-      const key = keySyncMetric(service);
-      if (key) {
-        syncTitle.textContent = t(key.label);
-        syncValue.textContent = numberFormat.format(key.value) + (key.unit ? " " + t(key.unit) : "");
-      } else {
-        syncValue.textContent = t("暂无同步数据");
-      }
-    }
+  const charts = element(card, ".service-charts");
+  if (service.kind === "http") return;
+  charts.hidden = false;
+  const rows = syncComparisons(service);
+  if (!rows.length) {
+    const empty = element(card, ".no-sync-data");
+    empty.textContent = t("暂无同步数据");
+    empty.hidden = false;
+    return;
   }
+  const container = element(card, ".sync-comparisons");
+  for (const row of rows) {
+    const strip = document.createElement("div");
+    strip.className = "sync-strip";
+    const measurements = document.createElement("dl");
+    measurements.className = "sync-measurements";
+    const add = (label: string, value: string, className: string, observedAt?: string) => {
+      const cell = document.createElement("div");
+      cell.className = className;
+      const term = document.createElement("dt");
+      term.textContent = t(label);
+      const data = document.createElement("dd");
+      data.textContent = value;
+      cell.append(term, data);
+      if (observedAt) {
+        const stamp = document.createElement("time");
+        stamp.dateTime = observedAt;
+        stamp.textContent = `${t("观测于")} ${timeFormat.format(Date.parse(observedAt))}`;
+        cell.append(stamp);
+      }
+      measurements.append(cell);
+    };
+    if (row.current) add(row.current.label, numberFormat.format(row.current.value), "height-current", row.current.observedAt);
+    if (row.target) add(row.target.label, numberFormat.format(row.target.value), "height-target", row.target.observedAt);
+    if (row.lag !== undefined) add(row.gapLabel ?? "落后", `${numberFormat.format(row.lag)} ${t("块")}`, "height-lag");
+    strip.append(measurements);
+    if (row.ratio !== undefined && row.current && row.target) {
+      const progress = document.createElement("progress");
+      progress.max = 1;
+      progress.value = row.ratio;
+      const formatted = displayPercent(progress.value);
+      progress.setAttribute("aria-label", `${t(row.current.label)} / ${t(row.target.label)}`);
+      progress.setAttribute("aria-valuetext", formatted);
+      const track = document.createElement("div");
+      track.className = "sync-track";
+      const percentage = document.createElement("span");
+      percentage.className = "progress-value";
+      percentage.setAttribute("aria-hidden", "true");
+      percentage.textContent = formatted;
+      track.append(progress, percentage);
+      strip.append(track);
+    }
+    container.append(strip);
+  }
+}
+
+function renderUptime(card: DocumentFragment, service: Service) {
   const uptime = uptimeDay(service.availability);
   const uptimeLabel = t("24 小时可用率");
   const uptimeRatio = element(card, ".uptime-ratio");
   const uptimeCount = element(card, ".uptime-count");
   const meter = element<HTMLMeterElement>(card, "meter");
-  meter.hidden = !uptime;
+  element(card, ".uptime-group").hidden = !uptime;
   meter.setAttribute("aria-label", uptimeLabel);
   element(card, ".uptime-title").textContent = uptimeLabel;
   uptimeRatio.textContent = uptime ? displayPercent(uptime.available / uptime.total) : t("暂无样本");

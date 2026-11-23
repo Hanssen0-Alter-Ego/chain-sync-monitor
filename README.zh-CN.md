@@ -28,10 +28,12 @@ docker compose up -d --build
 
 - CKB：已验证高度、已知高度、Indexer；BTC：已验证高度、区块头、IBD。
 - Blockbook：索引高度和同步标记，跟配置的 BTC Core 对比；支持分别配置主网和 Testnet3。
-- SPV：默认只探测证明 RPC；配置实例的完整 `type_script` 后，也可通过 CKB Indexer 读链上高度，不把它当成本地缓存高度。
+- SPV：支持 `getSyncStatus` 的服务会显示缓存的 BTC 高度、本地头高度和最近确认的链上客户端高度，附可用的观测时间。缓存不等于独立验证同步。可选填完整实例 `type_script` 通过 CKB Indexer 核验链上高度；配置的 Bitcoin Core 高度优先。旧版证明 RPC 仍可用。
 - CKBadger：双网部署分别用 `/api/mainnet/v1/statistics/network` 与 `/api/testnet/v1/statistics/network`；单网独立部署用 `/api/v1/statistics/network`。
 - BTC Asset API 等 HTTP 服务：按 2xx 判断可用，不跟随重定向，不显示链同步进度。
 
 24 小时、7 天可用率按实际探测样本计算；同步中不等于不可用，监控停机也不算节点停机。升级时可保留原 TOML 与 Compose 的 `monitor-history` 卷（SQLite 格式不变），不要让旧、新两个监控进程同时写同一个库。
 
 本地用 Node.js 24，执行 `npm ci && npm test`。PR 跑测试并构建 Docker；`main` 测试通过会发布 GHCR 镜像。
+
+内置 GitHub 图标链接上游仓库；自定义 HTTP 探测可通过 `github_url = "https://github.com/owner/repo"` 添加图标，与 `public_url` 独立。

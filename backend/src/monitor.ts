@@ -1,7 +1,7 @@
 import { networks, type Network, type Reading, type Snapshot, type Availability } from "../../shared/status.js";
 import type { Config } from "./config.js";
 import { availability, historyError, type HistoryStore } from "./history.js";
-import { compareBlockbook, inspectOnchain, metric, probe, reading, type BitcoinTip } from "./probes.js";
+import { compareBlockbook, inspectOnchain, mergeSpvStatus, metric, probe, reading, type BitcoinTip } from "./probes.js";
 
 async function parallel<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>) {
   const output: R[] = [];
@@ -33,7 +33,7 @@ export class Monitor {
     return {
       updatedAt, intervalSeconds: this.config.intervalSeconds, historyError: this.error,
       services: this.probes.map(({ network, id, endpoint }, index) => ({
-        id, network, kind: endpoint.kind, label: endpoint.label, publicUrl: endpoint.publicUrl,
+        id, network, kind: endpoint.kind, label: endpoint.label, publicUrl: endpoint.publicUrl, githubUrl: endpoint.githubUrl,
         ...(readings[index] ?? reading("unknown", [], "等待首次检查。")),
         probeAvailable: current[index] ?? null,
         availability: this.history[id] ?? availability(),
@@ -66,9 +66,16 @@ export class Monitor {
         return live;
       }
       if (endpoint.kind === "blockbook") this.bookHeights.delete(network);
-      if (endpoint.kind === "spv" && result.available && result.reading.state === "unknown") {
-        return await inspectOnchain(endpoint.typeScript, this.config.endpoints[network].get("ckb"), btc,
-          this.config.timeoutSeconds, result.reading);
+      if (endpoint.kind === "spv") {
+        const status = result.spvStatus;
+        let live = result.reading;
+        if (result.available && live.state === "unknown" && (endpoint.typeScript !== undefined || !status)) {
+          live = await inspectOnchain(endpoint.typeScript, this.config.endpoints[network].get("ckb"), btc,
+            this.config.timeoutSeconds, live, status?.local !== undefined);
+        } else if (result.available && status) {
+          live = { ...live, note: "SPV 高度来自服务缓存的观测，不代表已独立核实同步。" };
+        }
+        return mergeSpvStatus(live, status, btc);
       }
       return result.reading;
     }));

@@ -13,7 +13,6 @@
   <main class="shell">
     <header class="page-header">
       <div>
-        <p class="eyebrow">CHAIN SYNC MONITOR</p>
         <h1>Chain Sync Monitor</h1>
       </div>
       <div class="toolbar">
@@ -27,7 +26,6 @@
     <template id="network-template">
       <section class="network">
         <header class="network-header">
-          <span class="network-code" aria-hidden="true"></span>
           <h2></h2>
           <span class="network-summary"></span>
         </header>
@@ -39,31 +37,34 @@
         <header class="card-header">
           <div>
             <p class="kind"></p>
-            <h3></h3>
+            <div class="project-title">
+              <h3></h3>
+              <a class="github-link" target="_blank" rel="noopener noreferrer" hidden>
+                <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true" focusable="false"><path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/></svg>
+              </a>
+            </div>
           </div>
           <div class="service-states">
             <span class="state probe-state"><span class="dot" aria-hidden="true"></span><span class="state-label"></span></span>
             <span class="state sync-state"><span class="dot" aria-hidden="true"></span><span class="state-label"></span></span>
           </div>
         </header>
-        <div class="service-charts">
-          <div class="progress-group" hidden>
-            <div class="progress-label"><span class="progress-title">Sync progress</span><span class="progress-value"></span></div>
-            <progress max="1" aria-label="Sync progress" hidden></progress>
-          </div>
-          <div class="uptime-group">
-            <div class="progress-label">
-              <span class="uptime-title">24-hour uptime</span>
-              <span><span class="uptime-ratio"></span> <span class="uptime-count"></span></span>
-            </div>
-            <meter min="0" max="1" aria-label="24-hour uptime" hidden></meter>
-          </div>
+        <div class="service-charts" hidden>
+          <div class="sync-comparisons"></div>
+          <p class="no-sync-data" hidden>No sync data</p>
         </div>
         <details class="service-details">
           <summary>Details</summary>
           <dl class="metrics"></dl>
           <div class="availability" hidden>
             <p class="availability-title" title="Based on probe samples, independent of chain sync progress">Probe availability</p>
+          <div class="uptime-group" hidden>
+            <div class="progress-label">
+              <span class="uptime-title">24-hour uptime</span>
+              <span><span class="uptime-ratio"></span> <span class="uptime-count"></span></span>
+            </div>
+            <meter min="0" max="1" aria-label="24-hour uptime"></meter>
+          </div>
             <dl class="availability-windows"></dl>
           </div>
           <p class="note" hidden></p>

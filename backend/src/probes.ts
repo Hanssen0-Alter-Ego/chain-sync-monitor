@@ -22,6 +22,7 @@ export interface Observation {
   reading: Reading;
   available: boolean;
   tip?: BitcoinTip;
+  spvStatus?: SpvStatus;
 }
 export type BaseProbe = Observation | { book: Record<string, unknown>; backend: Record<string, unknown>; available: boolean };
 
@@ -131,11 +132,16 @@ export function compareBlockbook(network: Network, book: Record<string, unknown>
     return done("unknown", "Blockbook REST 尚未报告足够的同步状态。");
   }
   const hash = backend.bestBlockHash;
+  const reportedTip = typeof backend.chain === "string" && btcChains[network].includes(backend.chain)
+    ? nat(backend.blocks) : undefined;
   if (tip && height !== undefined) {
-    rows.push(metric("配置的 Core 高度", tip.height), metric("落后 Core", Math.max(tip.height - height, 0), "块"));
-    if (nat(backend.blocks) === tip.height && tip.hash && typeof hash === "string" && btcHash.test(hash) && hash.toLowerCase() !== tip.hash) {
+    if (reportedTip === tip.height && tip.hash && typeof hash === "string" && btcHash.test(hash) && hash.toLowerCase() !== tip.hash) {
       return done("degraded", "Blockbook 所连节点与配置的 Core 同高度区块哈希不同。");
     }
+    rows.push(metric("配置的 Core 高度", tip.height));
+    if (height <= tip.height) rows.push(metric("落后 Core", tip.height - height, "块"));
+  } else if (reportedTip !== undefined) {
+    rows.push(metric("Blockbook 上游高度", reportedTip));
   }
   if (book.initialSync === true || !chainSync || !mempoolSync || (tip && height !== undefined && height < tip.height)) {
     return done("syncing", "以 Blockbook REST 报告为准；全量索引时高度可能不会持续刷新。",
@@ -159,8 +165,63 @@ function ckbadger(payload: unknown) {
   return reading(sync.isSyncing === true || lag ? "syncing" : sync.isSyncing === false && target > 0 ? "synced" : "unknown",
     rows, undefined, target ? height / target : undefined);
 }
+type ObservedHeight = { height: number; observedAt?: string };
+interface SpvStatus {
+  bitcoin?: ObservedHeight;
+  local?: ObservedHeight;
+  confirmed?: ObservedHeight & { start: number };
+}
+function spvObservation(value: unknown, heightKey: "height" | "endHeight"): ObservedHeight | undefined {
+  const fields = record(value);
+  const height = nat(fields?.[heightKey]);
+  if (height === undefined || height > 0xffff_ffff) return;
+  const epoch = nat(fields?.observedAt);
+  const timestamp = epoch === undefined ? undefined : new Date(epoch * 1000);
+  return { height, observedAt: timestamp && Number.isFinite(timestamp.valueOf()) ? timestamp.toISOString() : undefined };
+}
+async function spvStatus(endpoint: Endpoint, timeout: number): Promise<SpvStatus | undefined> {
+  try {
+    const response = record(await rpc(endpoint, timeout, "getSyncStatus"));
+    if (!response || !["bitcoinTip", "localHeaderTip", "confirmedClient"].every(key => Object.hasOwn(response, key))) return;
+    const bitcoin = spvObservation(response.bitcoinTip, "height");
+    const local = spvObservation(response.localHeaderTip, "height");
+    const client = spvObservation(response.confirmedClient, "endHeight");
+    const start = nat(record(response.confirmedClient)?.startHeight);
+    const confirmed = client && start !== undefined && start <= client.height ? { ...client, start } : undefined;
+    return { bitcoin, local, confirmed };
+  } catch { return; }
+}
+async function spvProof(endpoint: Endpoint, timeout: number): Promise<Observation> {
+  try { await rpc(endpoint, timeout, "getTxProof"); }
+  catch (error) {
+    if (error instanceof RpcError && error.code === -32602) {
+      return { reading: reading("unknown", [metric("证明 RPC", "在线")], "仅验证 RPC 可达，不能据此判断链上同步。"), available: true };
+    }
+    if (error instanceof RpcError && error.code === -32601) {
+      return { reading: reading("degraded", [metric("RPC", "在线")], "端点未公开 getTxProof。"), available: false };
+    }
+    return { reading: error instanceof ProbeError ? reading(error.state, [], error.note)
+      : reading("degraded", [], "检查失败，未能取得有效数据。"), available: false };
+  }
+  return { reading: reading("unknown", [metric("RPC", "在线")], "端点未按预期拒绝空参数；同步仍未经验证。"), available: false };
+}
+function observedMetric(label: string, observation: ObservedHeight): Metric {
+  return { ...metric(label, observation.height), observedAt: observation.observedAt };
+}
+export function mergeSpvStatus(live: Reading, status: SpvStatus | undefined, btc: BitcoinTip | undefined): Reading {
+  if (!status) return live;
+  const metrics = [...live.metrics];
+  if (status.local) metrics.push(observedMetric("本地 SPV 高度", status.local));
+  if (btc) {
+    if (!metrics.some(row => row.label === "本地 BTC 高度")) metrics.push(metric("本地 BTC 高度", btc.height));
+  } else if (status.bitcoin) metrics.push(observedMetric("SPV 观测的 BTC 高度", status.bitcoin));
+  if (status.confirmed && !metrics.some(row => row.label === "链上 SPV 高度")) {
+    metrics.push(observedMetric("SPV 缓存的链上高度", status.confirmed), metric("SPV 缓存的起始 BTC 高度", status.confirmed.start));
+  }
+  return { ...live, metrics };
+}
 export async function inspectOnchain(scriptValue: unknown, ckb: Endpoint | undefined, btc: BitcoinTip | undefined,
-  timeout: number, live: Reading): Promise<Reading> {
+  timeout: number, live: Reading, hasLocal = false): Promise<Reading> {
   if (scriptValue === undefined) return { ...live, note: "RPC 在线；配置 type_script 可查看链上 SPV 高度。" };
   if (!ckb) return { ...live, note: "RPC 在线；请配置 CKB 端点以核对链上 SPV 高度。" };
   const script = record(scriptValue);
@@ -192,8 +253,8 @@ export async function inspectOnchain(scriptValue: unknown, ckb: Endpoint | undef
     }
     const [first, tip] = active;
     const metrics = [...live.metrics, metric("链上 SPV 高度", tip), metric("起始 BTC 高度", first), metric("SPV 客户端数", clients.size)];
-    const note = "SPV RPC 未提供本地缓存高度。";
-    if (!btc || btc.height < tip) return reading("unknown", metrics, note + " 暂无可比对的 BTC 高度。");
+    const note = hasLocal ? undefined : "SPV RPC 未提供本地缓存高度。";
+    if (!btc || btc.height < tip) return reading("unknown", metrics, note ? note + " 暂无可比对的 BTC 高度。" : "暂无可比对的 BTC 高度。");
     const lag = btc.height - tip;
     metrics.push(metric("本地 BTC 高度", btc.height), metric("SPV 落后", lag, "块"));
     return reading(lag ? "syncing" : btc.synced ? "synced" : "unknown", metrics, note,
@@ -223,17 +284,8 @@ export async function probe(network: Network, endpoint: Endpoint, timeout: numbe
           available ? undefined : "HTTP 探测要求 2xx，不跟随重定向。"), available };
       }
       case "spv": {
-        try { await rpc(endpoint, timeout, "getTxProof"); }
-        catch (error) {
-          if (error instanceof RpcError && error.code === -32602) {
-            return { reading: reading("unknown", [metric("证明 RPC", "在线")], "仅验证 RPC 可达，不能据此判断链上同步。"), available: true };
-          }
-          if (error instanceof RpcError && error.code === -32601) {
-            return { reading: reading("degraded", [metric("RPC", "在线")], "端点未公开 getTxProof。"), available: false };
-          }
-          throw error;
-        }
-        return { reading: reading("unknown", [metric("RPC", "在线")], "端点未按预期拒绝空参数；同步仍未经验证。"), available: false };
+        const [proof, status] = await Promise.all([spvProof(endpoint, timeout), spvStatus(endpoint, timeout)]);
+        return { ...proof, spvStatus: status };
       }
     }
   } catch (error) {
