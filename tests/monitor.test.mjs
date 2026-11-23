@@ -65,6 +65,14 @@ test("separate frontend status API, all probes, CORS and no implicit RPC/config 
         initialblockdownload: false, verificationprogress: 1,
       }));
     }
+    if (args.method === "getindexinfo") {
+      assert.deepEqual(args.params, []);
+      assert.equal(req.headers.authorization, "Basic " + Buffer.from("watcher:SAMPLE_ONLY_PASSWORD").toString("base64"));
+      return json(res, reply(req.url.startsWith("/main") ? {
+        txindex: { synced: true, best_block_height: 100 },
+        txospenderindex: { synced: false, best_block_height: 0 },
+      } : { txindex: { synced: false, best_block_height: 50 }, coinstatsindex: {} }));
+    }
     if (args.method === "sync_state") return json(res, reply({ tip_number: "0xa", ibd: false }));
     if (args.method === "get_indexer_tip") return json(res, reply({ block_number: "0xa" }));
     if (args.method === "getTxProof") {
@@ -139,6 +147,14 @@ github_url = "https://github.com/example/project/"
   assert.equal(get("mainnet-spv").state, "synced");
   assert.equal(get("mainnet-spv").metrics.find(m => m.label === "链上 SPV 高度").value, 100);
   assert.equal(get("mainnet-btc").state, "synced");
+  assert.deepEqual(get("mainnet-btc").bitcoinIndexes, {
+    txindex: { state: "synced", height: 100 },
+    txospenderindex: { state: "syncing", height: 0 },
+  });
+  assert.deepEqual(get("testnet3-btc").bitcoinIndexes, {
+    txindex: { state: "syncing", height: 50 },
+    txospenderindex: { state: "disabled" },
+  });
   assert.equal(get("mainnet-blockbook").state, "synced");
   assert.equal(get("testnet3-blockbook").state, "synced");
   assert.equal(get("mainnet-ckbadger").progress, 0.2);
@@ -154,6 +170,35 @@ github_url = "https://github.com/example/project/"
   assert.equal((await fetch(base + "/api/status?url=" + target)).status, 404);
   assert.equal((await fetch(base + "/api/status", { method: "POST", body: "{}" })).status, 405);
   assert.equal(requests.length, amount, "browser traffic must not trigger any probes");
+});
+test("unavailable Bitcoin index status never downgrades a healthy chain probe", async (t) => {
+  const url = await listen(t, createServer(async (req, res) => {
+    const { method } = await payload(req);
+    if (method === "getblockchaininfo") return json(res, reply({
+      chain: "main", blocks: 27, headers: 27, initialblockdownload: false,
+    }));
+    assert.equal(method, "getindexinfo");
+    switch (req.url) {
+      case "/legacy": return json(res, { id: 1, error: { code: -32601 } }, 404);
+      case "/forbidden": return res.writeHead(403).end();
+      case "/malformed": return json(res, reply([]));
+      case "/partial": return json(res, reply({
+        txindex: { synced: false, best_block_height: 25 },
+        txospenderindex: { synced: false, best_block_height: "25" },
+      }));
+      default: return res.writeHead(500).end();
+    }
+  }));
+  for (const path of ["/legacy", "/forbidden", "/malformed", "/partial"]) {
+    const { reading, available, tip } = await probe("mainnet", { url: url + path, kind: "btc", label: "Bitcoin Core" }, 0.5);
+    assert.equal(available, true, path);
+    assert.equal(reading.state, "synced", path);
+    assert.equal(tip.height, 27, path);
+    assert.deepEqual(reading.bitcoinIndexes, {
+      txindex: path === "/partial" ? { state: "syncing", height: 25 } : { state: "unavailable" },
+      txospenderindex: { state: "unavailable" },
+    }, path);
+  }
 });
 test("keeps original SQLite history, counts samples and excludes monitor gaps", (t) => {
   const path = join(directory(t), "history.sqlite3");
@@ -371,6 +416,12 @@ test("co-deploy keeps static frontend and read-only status", async (t) => {
   assert.ok((await html.text()).includes("<title>Chain Sync Monitor</title>"));
   const localeModule = await fetch(base + "/i18n.js");
   assert.equal((await fetch(base + "/presentation.js")).status, 200);
+  for (const path of ["/locales.js", "/de.js", "/fr.js", "/favicon.svg", "/og.png"]) {
+    const asset = await fetch(base + path);
+    assert.equal(asset.status, 200, path);
+    const mime = path.endsWith(".js") ? "text/javascript" : path.endsWith(".png") ? "image/png" : "image/svg+xml";
+    assert.equal(asset.headers.get("content-type").split(";")[0], mime, path);
+  }
   assert.equal(localeModule.status, 200);
   assert.match(localeModule.headers.get("content-type"), /^text\/javascript/);
   const config = await fetch(base + "/config.js");
@@ -384,11 +435,11 @@ test("co-deploy keeps static frontend and read-only status", async (t) => {
   assert.match(head.headers.get("content-type"), /^application\/json/);
 });
 test("Netlify artifact embeds only the HTTPS status endpoint and restricts browser connections", (t) => {
-  const file = "dist/web/config.js", headers = "dist/web/_headers";
-  const keep = new Map([file, headers].map(path => [path, readFileSync(path)]));
+  const file = "dist/web/config.js", headers = "dist/web/_headers", index = "dist/web/index.html";
+  const keep = new Map([file, headers, index].map(path => [path, readFileSync(path)]));
   t.after(() => { for (const [path, content] of keep) writeFileSync(path, content); });
-  const run = (STATUS_API_URL) => spawnSync(process.execPath, ["frontend/build.mjs"], {
-    env: { ...process.env, NETLIFY: "true", STATUS_API_URL, BTC_PASSWORD: "sample-unrelated-secret" },
+  const run = (STATUS_API_URL, URL) => spawnSync(process.execPath, ["frontend/build.mjs"], {
+    env: { ...process.env, NETLIFY: "true", URL, STATUS_API_URL, BTC_PASSWORD: "sample-unrelated-secret" },
   });
   assert.equal(run("").status, 1);
   assert.equal(run("https://username:password@example.com/api/status").status, 1);
@@ -396,6 +447,10 @@ test("Netlify artifact embeds only the HTTPS status endpoint and restricts brows
   assert.match(readFileSync(file, "utf8"), /https:\/\/api.example.com\/api\/status/);
   assert.doesNotMatch(readFileSync(file, "utf8"), /sample-unrelated-secret/);
   assert.match(readFileSync(headers, "utf8"), /connect-src 'self' https:\/\/api.example.com/);
+  assert.equal(run("https://api.example.com/api/status", "https://monitor.example.org").status, 0);
+  assert.match(readFileSync(index, "utf8"), /property="og:image" content="https:\/\/monitor\.example\.org\/og\.png"/);
+  assert.equal(run("https://api.example.com/api/status", "https://attacker@example.org/deploy").status, 0);
+  assert.match(readFileSync(index, "utf8"), /property="og:image" content="https:\/\/chain-sync-monitor\.netlify\.app\/og\.png"/);
 });
 test("CKBadger warm-up does not mark the service available; wrong BTC network is not healthy", async (t) => {
   const base = await listen(t, createServer((req, res) => {

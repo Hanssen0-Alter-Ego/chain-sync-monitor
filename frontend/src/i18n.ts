@@ -1,22 +1,32 @@
-export type DashboardLanguage = "en" | "zh-CN";
+import de from "./de.js";
+import fr from "./fr.js";
+import { ja, zhHant } from "./locales.js";
+
+export type DashboardLanguage = "en" | "zh-CN" | "zh-Hant" | "ja" | "fr" | "de";
 
 export function dashboardLanguage(preferences: readonly string[]): DashboardLanguage {
   for (const preference of preferences) {
-    const language = preference.toLowerCase().split("-")[0];
-    if (language === "zh") return "zh-CN";
-    if (language === "en") return "en";
+    const [language, ...parts] = preference.toLowerCase().split("-");
+    if (language === "zh") {
+      if (parts.includes("hans")) return "zh-CN";
+      if (parts.includes("hant") || parts.some(part => ["tw", "hk", "mo"].includes(part))) return "zh-Hant";
+      return "zh-CN";
+    }
+    if (language === "en" || language === "ja" || language === "fr" || language === "de") return language;
   }
   return "en";
 }
 
 // Keep status payloads compatible with previously deployed monitor backends.
 // Unknown/custom labels are preserved verbatim.
-const en = new Map(Object.entries({
+export const en = {
   "链同步监控": "Chain Sync Monitor",
   "Bitcoin、CKB 及索引服务的同步状态": "Sync status for Bitcoin, CKB, and indexing services",
   "立即刷新": "Refresh now",
+  "语言": "Language",
+  "自动": "Auto",
   "主网": "Mainnet",
-  "测试网（Bitcoin Testnet3）": "Testnet (Bitcoin Testnet3)",
+  "测试网": "Testnet",
   "已同步": "Synced",
   "在线": "Online",
   "同步中": "Syncing",
@@ -51,6 +61,8 @@ const en = new Map(Object.entries({
   "探测可用率": "Probe availability",
   "按探测样本计算，与链同步进度无关": "Based on probe samples, independent of chain sync progress",
   "暂无样本": "No samples",
+  "暂无响应": "No response",
+  "无数据": "No data",
   "数据可能已过期": "Data may be stale",
   "更新于": "Updated",
   "无法获取状态": "Status unavailable",
@@ -71,6 +83,9 @@ const en = new Map(Object.entries({
   "索引器高度": "Indexer height",
   "索引器落后": "Indexer lag",
   "索引高度": "Index height",
+  "交易索引": "Transaction index",
+  "已花费输出索引": "Spent-output index",
+  "未启用": "Disabled",
   "链同步": "Chain synced",
   "内存池同步": "Mempool synced",
   "配置的 Core 高度": "Configured Core height",
@@ -145,21 +160,35 @@ const en = new Map(Object.entries({
   "上游请求超时。": "The upstream request timed out.",
   "上游没有返回有效的 JSON。": "The upstream service did not return valid JSON.",
   "上游返回的 RPC 响应格式不匹配。": "The upstream RPC returned an unexpected response format.",
-}));
+} as const;
+
+const maps: Record<Exclude<DashboardLanguage, "zh-CN">, Record<keyof typeof en, string>> = { en, "zh-Hant": zhHant, ja, fr, de };
 
 export function translate(language: DashboardLanguage, value: string): string {
-  if (language !== "en") return value;
-  const direct = en.get(value);
-  if (direct !== undefined) return direct;
+  if (language === "zh-CN") return value;
+  const dict: Record<string, string> = maps[language];
+  if (Object.hasOwn(dict, value)) return dict[value];
   const rpc = /^RPC 返回错误（(-?\d+)）。$/.exec(value);
-  if (rpc) return `RPC returned error ${rpc[1]}.`;
+  if (rpc) return {
+    en: `RPC returned error ${rpc[1]}.`,
+    "zh-Hant": `RPC 傳回錯誤（${rpc[1]}）。`,
+    ja: `RPC エラー（${rpc[1]}）。`,
+    fr: `Le RPC a renvoyé une erreur (${rpc[1]}).`,
+    de: `RPC meldete Fehler ${rpc[1]}.`,
+  }[language];
   const http = /^上游返回 HTTP (\d+)。$/.exec(value);
-  if (http) return `The upstream service returned HTTP ${http[1]}.`;
+  if (http) return {
+    en: `The upstream service returned HTTP ${http[1]}.`,
+    "zh-Hant": `上游服務傳回 HTTP ${http[1]}。`,
+    ja: `上流サービスが HTTP ${http[1]} を返しました。`,
+    fr: `Le service en amont a renvoyé HTTP ${http[1]}.`,
+    de: `Der Upstream-Dienst meldete HTTP ${http[1]}.`,
+  }[language];
   const checks = value.split(/ (?=(?:sync_state|get_indexer_tip)：)/);
   if (checks.length > 1) return checks.map((note) => translate(language, note)).join(" ");
   const prefix = /^(sync_state|get_indexer_tip)：(.+)$/.exec(value);
   if (prefix) return `${prefix[1]}: ${translate(language, prefix[2])}`;
   const onChain = "RPC 在线；链上检查未成功。";
-  if (value.startsWith(onChain)) return en.get(onChain) + " " + translate(language, value.slice(onChain.length));
+  if (value.startsWith(onChain)) return dict[onChain] + (language === "ja" || language === "zh-Hant" ? "" : " ") + translate(language, value.slice(onChain.length));
   return value;
 }

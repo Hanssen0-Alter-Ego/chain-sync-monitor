@@ -44,7 +44,7 @@ export function projectRepository(service: Service): string | undefined {
 }
 
 type Height = { label: string; value: number; observedAt?: string };
-type Comparison = { current?: Height; target?: Height; lag?: number; ratio?: number; gapLabel?: string };
+type Comparison = { current?: Height; target?: Height; lag?: number; ratio?: number; gapLabel?: string; index?: { name: string; label: string; state: string } };
 function height(service: Service, metric: string, label = metric): Height | undefined {
   if (!Array.isArray(service.metrics)) return;
   const row = service.metrics.find(row => row?.label === metric);
@@ -59,7 +59,25 @@ function compare(current?: Height, target?: Height, gapLabel?: string): Comparis
 }
 export function syncComparisons(service: Service): Comparison[] {
   switch (service.kind) {
-    case "btc": return compare(height(service, "已验证区块高度"), height(service, "区块头高度"));
+    case "btc": {
+      const verified = height(service, "已验证区块高度");
+      const rows = compare(verified, height(service, "区块头高度"));
+      const indexes = [
+        { name: "txindex", label: "交易索引" },
+        { name: "txospenderindex", label: "已花费输出索引" },
+      ] as const;
+      for (const index of indexes) {
+        const result = service.bitcoinIndexes?.[index.name];
+        if (!result) continue;
+        if (result.state === "disabled" || result.state === "unavailable") {
+          rows.push({ index: { ...index, state: result.state === "disabled" ? "未启用" : "不可用" } });
+        } else if ("height" in result && Number.isSafeInteger(result.height) && result.height >= 0) {
+          const pair = compare({ label: "索引高度", value: result.height }, verified)[0];
+          rows.push({ ...pair, index: { ...index, state: result.state === "synced" ? "已同步" : "同步中" } });
+        }
+      }
+      return rows;
+    }
     case "ckb": {
       const verified = height(service, "节点区块高度");
       const known = height(service, "已知区块高度");

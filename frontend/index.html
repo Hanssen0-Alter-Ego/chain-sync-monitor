@@ -5,6 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>Chain Sync Monitor</title>
+  <meta name="description" content="Live sync and uptime for Bitcoin, CKB, and indexing services on mainnet and testnet.">
+  <meta property="og:title" content="Chain Sync Monitor">
+  <meta property="og:description" content="Live sync and uptime for Bitcoin, CKB, and indexing services on mainnet and testnet.">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="https://chain-sync-monitor.netlify.app/og.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Chain Sync Monitor: Bitcoin and CKB synchronization dashboard.">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/style.css">
   <script src="/config.js"></script>
   <script type="module" src="/app.js"></script>
@@ -18,6 +29,15 @@
       <div class="toolbar">
         <p class="freshness" id="freshness" aria-live="polite"><span class="dot"></span><span id="freshness-text">Waiting for data</span></p>
         <button type="button" id="refresh">Refresh now</button>
+        <select id="language" aria-label="Language">
+          <option id="language-auto" value="auto">Auto</option>
+          <option value="zh-CN" lang="zh-CN">简体中文</option>
+          <option value="zh-Hant" lang="zh-Hant">繁體中文</option>
+          <option value="ja" lang="ja">日本語</option>
+          <option value="fr" lang="fr">Français</option>
+          <option value="de" lang="de">Deutsch</option>
+          <option value="en" lang="en">English</option>
+        </select>
       </div>
     </header>
     <p class="subtitle">Sync status for Bitcoin, CKB, and indexing services</p>
@@ -51,10 +71,16 @@
         </header>
         <div class="service-charts" hidden>
           <div class="sync-comparisons"></div>
+          <div class="http-measurements sync-strip" hidden>
+            <dl class="sync-measurements">
+              <div><dt class="http-status-label"></dt><dd class="http-status"></dd></div>
+              <div><dt class="http-latency-label"></dt><dd class="http-latency"></dd></div>
+            </dl>
+          </div>
           <p class="no-sync-data" hidden>No sync data</p>
         </div>
         <details class="service-details">
-          <summary>Details</summary>
+          <summary><span class="details-label">Details</span><span class="service-uptime"><span class="service-uptime-label"></span> <span class="service-uptime-value"></span></span></summary>
           <dl class="metrics"></dl>
           <div class="availability" hidden>
             <p class="availability-title" title="Based on probe samples, independent of chain sync progress">Probe availability</p>

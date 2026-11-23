@@ -1,5 +1,5 @@
 import { currentProbe, probeTotals, projectRepository, syncComparisons, uptimeDay } from "./presentation.js";
-import { dashboardLanguage, translate } from "./i18n.js";
+import { dashboardLanguage, translate, type DashboardLanguage } from "./i18n.js";
 import type { Availability, Service, Snapshot } from "../../shared/status.js";
 
 declare global {
@@ -13,12 +13,25 @@ function element<T extends Element = HTMLElement>(parent: ParentNode, selector: 
   return match;
 }
 
-const language = dashboardLanguage(navigator.languages.length ? navigator.languages : [navigator.language]);
+type LanguagePreference = "auto" | DashboardLanguage;
+const languageKey = "chain-sync-monitor.language";
+function preference(value: string | null): LanguagePreference {
+  return value === "en" || value === "zh-CN" || value === "zh-Hant" || value === "ja" || value === "fr" || value === "de" ? value : "auto";
+}
+function loadLanguage(): LanguagePreference {
+  try { return preference(window.localStorage.getItem(languageKey)); }
+  catch { return "auto"; }
+}
+function resolveLanguage(selected: LanguagePreference): DashboardLanguage {
+  return selected === "auto" ? dashboardLanguage(navigator.languages?.length ? navigator.languages : [navigator.language]) : selected;
+}
+let selectedLanguage = loadLanguage();
+let language = resolveLanguage(selectedLanguage);
 const t = (value: string) => translate(language, value);
 
 const networks = [
   { id: "mainnet", label: "主网" },
-  { id: "testnet3", label: "测试网（Bitcoin Testnet3）" },
+  { id: "testnet3", label: "测试网" },
 ];
 const kinds = { btc: "BITCOIN", ckb: "CKB", blockbook: "INDEXER", spv: "SPV", ckbadger: "INDEXER", http: "HTTP" };
 const states = {
@@ -36,16 +49,25 @@ const freshness = element(document, "#freshness");
 const freshnessText = element(document, "#freshness-text");
 const notice = element(document, "#notice");
 const refreshButton = element<HTMLButtonElement>(document, "#refresh");
-const numberFormat = new Intl.NumberFormat(language, { maximumFractionDigits: 6 });
-const percentFormat = new Intl.NumberFormat(language, { style: "percent", maximumFractionDigits: 2 });
-const timeFormat = new Intl.DateTimeFormat(language, { dateStyle: "short", timeStyle: "medium" });
+const languageSelect = element<HTMLSelectElement>(document, "#language");
+let numberFormat: Intl.NumberFormat;
+let percentFormat: Intl.NumberFormat;
+let timeFormat: Intl.DateTimeFormat;
 
-document.documentElement.lang = language;
-document.title = t("链同步监控");
-element(document, "h1").textContent = document.title;
-element(document, ".subtitle").textContent = t("Bitcoin、CKB 及索引服务的同步状态");
-refreshButton.textContent = t("立即刷新");
-freshnessText.textContent = t("等待数据");
+function applyLanguage() {
+  language = resolveLanguage(selectedLanguage);
+  numberFormat = new Intl.NumberFormat(language, { maximumFractionDigits: 6 });
+  percentFormat = new Intl.NumberFormat(language, { style: "percent", maximumFractionDigits: 2 });
+  timeFormat = new Intl.DateTimeFormat(language, { dateStyle: "short", timeStyle: "medium" });
+  document.documentElement.lang = language;
+  document.title = t("链同步监控");
+  element(document, "h1").textContent = document.title;
+  element(document, ".subtitle").textContent = t("Bitcoin、CKB 及索引服务的同步状态");
+  refreshButton.textContent = t("立即刷新");
+  languageSelect.value = selectedLanguage;
+  languageSelect.setAttribute("aria-label", t("语言"));
+  element(document, "#language-auto").textContent = t("自动");
+}
 
 let snapshot: Snapshot | null = null;
 let interval = 30;
@@ -136,7 +158,7 @@ function makeCard(service: Service) {
   element(syncState, ".state-label").textContent = t(states[state]);
   syncState.title = t("同步状态");
   const detailsLabel = element(element(card, ".service-details"), "summary");
-  detailsLabel.textContent = t("详情");
+  element(detailsLabel, ".details-label").textContent = t("详情");
   detailsLabel.setAttribute("aria-label", `${t("详情")}: ${service.label && service.kind !== "http" ? t(service.label) : service.label || service.id}`);
   renderCharts(card, service);
   const metrics = element(card, ".metrics");
@@ -171,8 +193,21 @@ function makeCard(service: Service) {
 
 function renderCharts(card: DocumentFragment, service: Service) {
   const charts = element(card, ".service-charts");
-  if (service.kind === "http") return;
   charts.hidden = false;
+  if (service.kind === "http") {
+    const http = element(card, ".http-measurements");
+    http.hidden = false;
+    const metrics = Array.isArray(service.metrics) ? service.metrics : [];
+    const status = metrics.find(metric => metric?.label === "HTTP 状态")?.value;
+    const latency = metrics.find(metric => metric?.label === "响应时间")?.value;
+    element(http, ".http-status-label").textContent = t("HTTP 状态");
+    element(http, ".http-latency-label").textContent = t("响应时间");
+    element(http, ".http-status").textContent = typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599
+      ? numberFormat.format(status) : t("暂无响应");
+    element(http, ".http-latency").textContent = typeof latency === "number" && Number.isFinite(latency) && latency >= 0
+      ? `${numberFormat.format(latency)} ms` : t("无数据");
+    return;
+  }
   const rows = syncComparisons(service);
   if (!rows.length) {
     const empty = element(card, ".no-sync-data");
@@ -184,6 +219,12 @@ function renderCharts(card: DocumentFragment, service: Service) {
   for (const row of rows) {
     const strip = document.createElement("div");
     strip.className = "sync-strip";
+    if (row.index) {
+      const title = document.createElement("p");
+      title.className = "index-title";
+      title.textContent = `${t(row.index.label)} (${row.index.name}) · ${t(row.index.state)}`;
+      strip.append(title);
+    }
     const measurements = document.createElement("dl");
     measurements.className = "sync-measurements";
     const add = (label: string, value: string, className: string, observedAt?: string) => {
@@ -205,7 +246,7 @@ function renderCharts(card: DocumentFragment, service: Service) {
     if (row.current) add(row.current.label, numberFormat.format(row.current.value), "height-current", row.current.observedAt);
     if (row.target) add(row.target.label, numberFormat.format(row.target.value), "height-target", row.target.observedAt);
     if (row.lag !== undefined) add(row.gapLabel ?? "落后", `${numberFormat.format(row.lag)} ${t("块")}`, "height-lag");
-    strip.append(measurements);
+    if (measurements.hasChildNodes()) strip.append(measurements);
     if (row.ratio !== undefined && row.current && row.target) {
       const progress = document.createElement("progress");
       progress.max = 1;
@@ -229,13 +270,18 @@ function renderCharts(card: DocumentFragment, service: Service) {
 function renderUptime(card: DocumentFragment, service: Service) {
   const uptime = uptimeDay(service.availability);
   const uptimeLabel = t("24 小时可用率");
+  const formatted = uptime ? displayPercent(uptime.available / uptime.total) : t("暂无样本");
+  element(card, ".service-uptime-label").textContent = uptimeLabel;
+  element(card, ".service-uptime-value").textContent = formatted;
+  const summary = element(element(card, ".service-details"), "summary");
+  summary.setAttribute("aria-label", `${summary.getAttribute("aria-label")} · ${uptimeLabel} ${formatted}`);
   const uptimeRatio = element(card, ".uptime-ratio");
   const uptimeCount = element(card, ".uptime-count");
   const meter = element<HTMLMeterElement>(card, "meter");
   element(card, ".uptime-group").hidden = !uptime;
   meter.setAttribute("aria-label", uptimeLabel);
   element(card, ".uptime-title").textContent = uptimeLabel;
-  uptimeRatio.textContent = uptime ? displayPercent(uptime.available / uptime.total) : t("暂无样本");
+  uptimeRatio.textContent = formatted;
   if (uptime) {
     meter.value = uptime.available / uptime.total;
     uptimeCount.textContent = `(${numberFormat.format(uptime.available)}/${numberFormat.format(uptime.total)} ${t("次")})`;
@@ -328,6 +374,21 @@ async function loadStatus() {
 }
 
 refreshButton.addEventListener("click", loadStatus);
+languageSelect.addEventListener("change", () => {
+  selectedLanguage = preference(languageSelect.value);
+  try { window.localStorage.setItem(languageKey, selectedLanguage); } catch { /* Continue without persistence. */ }
+  applyLanguage();
+  render(snapshot);
+  updateFreshness();
+});
+window.addEventListener("languagechange", () => {
+  if (selectedLanguage !== "auto") return;
+  applyLanguage();
+  render(snapshot);
+  updateFreshness();
+});
+applyLanguage();
 render(null);
+updateFreshness();
 loadStatus();
 window.setInterval(updateFreshness, 5000);

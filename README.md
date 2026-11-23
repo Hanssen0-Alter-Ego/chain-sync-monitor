@@ -4,7 +4,7 @@ A small, self-hosted dashboard for CKB and Bitcoin nodes, Blockbook and RGB++ SP
 
 [中文](README.zh-CN.md)
 
-The dashboard follows the browser’s language preferences (English or Simplified Chinese, with English as the fallback).
+The dashboard follows browser preferences by default. Use the language menu to choose English, Simplified Chinese, Traditional Chinese, Japanese, French, or German; the selection is saved in the browser.
 
 ## Run with Docker
 

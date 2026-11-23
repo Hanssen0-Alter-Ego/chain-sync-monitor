@@ -49,6 +49,21 @@ test("comparisons use real observations and show bars even near the tip", () => 
   assert.equal(check("spv", [["SPV 缓存的链上高度",91], ["本地 SPV 高度",90]])[0].ratio, undefined);
 });
 
+test("BTC optional index rows compare measured progress to the verified tip", () => {
+  const service = {kind:"btc",metrics:[{label:"已验证区块高度",value:100},{label:"区块头高度",value:120}]};
+  assert.equal(syncComparisons(service).length, 1);
+  const [node, tx, spender] = syncComparisons({ ...service, bitcoinIndexes: {
+    txindex: {state:"syncing",height:75}, txospenderindex:{state:"disabled"},
+  } });
+  assert.equal(node.target.value, 120);
+  assert.equal(tx.target.value, 100);
+  assert.equal(tx.lag, 25);
+  assert.equal(tx.ratio, .75);
+  assert.equal(tx.index.name, "txindex");
+  assert.equal(spender.index.state, "未启用");
+  assert.equal(spender.ratio, undefined);
+});
+
 test("GitHub repository icons do not conflate public service links or arbitrary probe IDs", () => {
   assert.equal(projectRepository({kind:"ckbadger"}), "https://github.com/janx/ckbadger");
   assert.equal(projectRepository({kind:"http",id:"testnet3-http:btc-asset-api"}), "https://github.com/RGBPlusPlus/btc-assets-api");
@@ -90,6 +105,7 @@ test("built dashboard renders two dimensions and preserves the expanded row afte
     hasChildNodes() { return this.children.length > 0; }
     addEventListener(event, listener) { this.handlers.set(event, listener); }
     setAttribute(key, value) { this.attrs[key] = value; }
+    getAttribute(key) { return this.attrs[key] ?? null; }
     matches(selector) { return selector === ".service-details > summary" && this.parentElement?.dataset.serviceId !== undefined; }
     focus() { globalThis.document.activeElement = this; }
   }
@@ -111,10 +127,21 @@ test("built dashboard renders two dimensions and preserves the expanded row afte
     progress: kind === "ckbadger" ? 0 : undefined,
     availability: {windows: [{seconds: 86_400, ratio: 0.75, available: kind === "spv" ? 0 : kind === "btc" ? 0 : 3, total: kind === "spv" ? 0 : 4}]},
   }));
+  services.push(
+    { id: "testnet3-http:btc-asset-api", network:"testnet3", kind:"http", label:"BTC Asset API", state:"online", probeAvailable:true,
+      metrics:[{label:"HTTP 状态",value:200},{label:"响应时间",value:0}], availability:{windows:[]} },
+    { id: "testnet3-http:other", network:"testnet3", kind:"http", label:"Other", state:"offline", probeAvailable:false,
+      metrics:[], availability:{windows:[]} },
+  );
   try {
     Object.defineProperty(globalThis, "document", { configurable: true, value: document });
     Object.defineProperty(globalThis, "navigator", { configurable: true, value: { languages: ["en-US"] } });
-    globalThis.window = { setTimeout() {}, setInterval() {}, clearTimeout() {} };
+    const preferences = new Map();
+    const listeners = new Map();
+    globalThis.window = { setTimeout() {}, setInterval() {}, clearTimeout() {},
+      addEventListener(event, fn) { listeners.set(event, fn); },
+      localStorage: { getItem(key) { return preferences.get(key) ?? null; }, setItem(key, value) { preferences.set(key, value); } },
+    };
     globalThis.fetch = async () => new Response(JSON.stringify({ updatedAt: new Date().toISOString(), intervalSeconds: 30, services }));
     await import("../dist/web/app.js");
     await new Promise(resolve => setImmediate(resolve));
@@ -126,6 +153,7 @@ test("built dashboard renders two dimensions and preserves the expanded row afte
     assert.equal(card(1).querySelector(".sync-state").dataset.state, "synced");
     assert.equal(card(2).querySelector(".sync-state").dataset.state, "syncing");
     const template = readFileSync(new URL("../dist/web/index.html", import.meta.url), "utf8");
+    assert.match(readFileSync(new URL("../dist/web/style.css", import.meta.url), "utf8"), /\.network\[data-network="mainnet"\] h2 \{ color: var\(--error\); \}/);
     assert.doesNotMatch(template, /class="(?:network-code|eyebrow)"/);
     assert.match(template, /<details class="service-details">[\s\S]*?<meter[\s\S]*?<\/details>/);
     const strips = index => card(index).querySelector(".sync-comparisons").children;
@@ -137,6 +165,18 @@ test("built dashboard renders two dimensions and preserves the expanded row afte
     assert.equal(strips(2)[0].children.length, 1);
     assert.equal(strips(4)[0].children[1].children[0].value, 0);
     assert.equal(card(2).querySelector("meter").value, .75);
+    assert.match(template, /<summary>[^]*?class="service-uptime"[^]*?<\/summary>/);
+    assert.equal(card(2).querySelector(".service-uptime-value").textContent, "75%");
+    assert.equal(card(0).querySelector(".service-uptime-value").textContent, "0%");
+    assert.equal(card(3).querySelector(".service-uptime-value").textContent, "No samples");
+    assert.match(card(2).querySelector(".service-details").querySelector("summary").attrs["aria-label"], /24-hour uptime 75%/);
+    assert.equal(document.querySelector("#networks").children[0].children[1].querySelector("h2").textContent, "Testnet");
+    const httpRows = document.querySelector("#networks").children[0].children[1].querySelector(".cards").children;
+    assert.equal(httpRows[0].querySelector(".kind").hidden, true);
+    assert.equal(httpRows[0].querySelector(".http-measurements").querySelector(".http-status").textContent, "200");
+    assert.equal(httpRows[0].querySelector(".http-measurements").querySelector(".http-latency").textContent, "0 ms");
+    assert.equal(httpRows[1].querySelector(".http-measurements").querySelector(".http-status").textContent, "No response");
+    assert.equal(httpRows[1].querySelector(".http-measurements").querySelector(".http-latency").textContent, "No data");
     assert.equal(card(3).querySelector(".uptime-group").hidden, true);
     assert.equal(card(3).querySelector(".no-sync-data").textContent, "No sync data");
     const details = card(3).querySelector(".service-details");
@@ -147,6 +187,32 @@ test("built dashboard renders two dimensions and preserves the expanded row afte
     assert.equal(card(3).querySelector(".service-details").open, true);
     assert.equal(card(2).querySelector(".service-details").open, false);
     assert.equal(document.activeElement, card(3).querySelector(".service-details").querySelector("summary"));
+    const selector = document.querySelector("#language");
+    const select = value => { selector.value = value; selector.handlers.get("change")(); };
+    assert.equal(selector.value, "auto");
+    assert.equal(document.documentElement.lang, "en");
+    select("zh-CN");
+    assert.equal(document.documentElement.lang, "zh-CN");
+    assert.equal(document.querySelector("h1").textContent, "链同步监控");
+    assert.equal(card(3).querySelector(".service-details").open, true);
+    assert.equal(preferences.get("chain-sync-monitor.language"), "zh-CN");
+    await import("../dist/web/app.js?after-reload");
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(selector.value, "zh-CN");
+    assert.equal(document.documentElement.lang, "zh-CN");
+    select("fr");
+    assert.equal(document.documentElement.lang, "fr");
+    select("de");
+    assert.equal(document.documentElement.lang, "de");
+    globalThis.window.localStorage.setItem = () => { throw new Error("storage blocked"); };
+    select("ja");
+    assert.equal(document.documentElement.lang, "ja");
+    globalThis.navigator.languages = ["zh-TW"];
+    select("auto");
+    assert.equal(document.documentElement.lang, "zh-Hant");
+    globalThis.navigator.languages = ["en"];
+    listeners.get("languagechange")();
+    assert.equal(document.documentElement.lang, "en");
   } finally {
     for (const [key, descriptor] of Object.entries(original)) {
       if (descriptor) Object.defineProperty(globalThis, key, descriptor);

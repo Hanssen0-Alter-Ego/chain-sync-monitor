@@ -8,6 +8,10 @@ const assets = [
   ["/", "index.html", "text/html"], ["/index.html", "index.html", "text/html"], ["/style.css", "style.css", "text/css"],
   ["/config.js", "config.js", "text/javascript"], ["/app.js", "app.js", "text/javascript"],
   ["/i18n.js", "i18n.js", "text/javascript"],
+  ["/locales.js", "locales.js", "text/javascript"],
+  ["/favicon.svg", "favicon.svg", "image/svg+xml"], ["/og.png", "og.png", "image/png"],
+  ["/fr.js", "fr.js", "text/javascript"],
+  ["/de.js", "de.js", "text/javascript"],
   ["/presentation.js", "presentation.js", "text/javascript"],
 ];
 function allowsOrigin(config: Config, origin: string): boolean {
@@ -58,7 +62,7 @@ export function makeServer(config: Config, snapshot: () => Snapshot, staticDir?:
 }
 function send(response: ServerResponse, status: number, type: string, payload: string | Buffer, head: boolean) {
   response.writeHead(status, {
-    "Content-Type": type + "; charset=utf-8",
+    "Content-Type": type === "image/png" ? type : type + "; charset=utf-8",
     "Content-Length": Buffer.byteLength(payload),
     "Cache-Control": "no-store",
     "X-Content-Type-Options": "nosniff",

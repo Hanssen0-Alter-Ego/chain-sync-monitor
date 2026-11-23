@@ -8,11 +8,18 @@ export interface Metric {
   unit?: string;
   observedAt?: string;
 }
+export const bitcoinIndexNames = ["txindex", "txospenderindex"] as const;
+export type BitcoinIndexName = typeof bitcoinIndexNames[number];
+export type BitcoinIndexReading =
+  | { state: "synced" | "syncing"; height: number }
+  | { state: "disabled" | "unavailable" };
+export type BitcoinIndexes = Record<BitcoinIndexName, BitcoinIndexReading>;
 export interface Reading {
   state: State;
   metrics: Metric[];
   note?: string;
   progress?: number;
+  bitcoinIndexes?: BitcoinIndexes;
 }
 export interface Availability {
   windows: {seconds: number; ratio: number | null; available: number; total: number}[];

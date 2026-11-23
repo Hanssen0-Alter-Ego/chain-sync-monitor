@@ -53,7 +53,7 @@ h1 { margin: 0; font-size: clamp(22px, 4vw, 25px); line-height: 1.15; font-weigh
 .freshness[data-status="fresh"] .dot { color: var(--signal); }
 .freshness[data-status="stale"] { color: var(--caution); }
 .dot { width: 5px; height: 5px; flex: 0 0 auto; background: currentColor; }
-button {
+button, #language {
   min-height: 36px;
   padding: 0 12px;
   border: 1px solid var(--line);
@@ -64,7 +64,8 @@ button {
   touch-action: manipulation;
 }
 button:hover:enabled { background: #e6eef20b; border-color: var(--line-dark); }
-button:focus-visible { outline: 2px solid var(--signal); outline-offset: 3px; }
+#language { background: var(--panel); padding-inline: 7px; }
+button:focus-visible, #language:focus-visible { outline: 2px solid var(--signal); outline-offset: 3px; }
 button:disabled { color: var(--muted); cursor: wait; }
 .notice { padding: 8px 12px; border: 1px solid var(--line-dark); color: var(--caution); background: var(--panel); }
 .network { margin-top: 12px; }
@@ -77,6 +78,8 @@ button:disabled { color: var(--muted); cursor: wait; }
   padding: 7px 0;
 }
 h2 { margin: 0; font-size: 14px; font-weight: 600; }
+.network[data-network="mainnet"] h2 { color: var(--error); }
+.network[data-network="testnet3"] h2 { color: var(--signal); }
 .network-summary, .empty { color: var(--muted); font-size: 12px; }
 .network-summary { margin-left: auto; font-variant-numeric: tabular-nums; }
 .cards { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
@@ -108,6 +111,8 @@ h3 { margin: 0; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
   font-size: 11px;
 }
 .service-states { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
+.service-uptime { float: inline-end; color: var(--muted); margin-inline-start: 8px; font-size: 11px; }
+.service-uptime-value { font-variant-numeric: tabular-nums; }
 .state[data-state="synced"], .state[data-state="online"] { color: var(--good); }
 .state[data-state="syncing"] { color: var(--signal); }
 .state[data-state="degraded"] { color: var(--caution); }
@@ -120,6 +125,8 @@ h3 { margin: 0; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
 .sync-comparisons { display: grid; gap: 0; }
 .sync-strip { padding: 8px 10px; }
 .sync-strip + .sync-strip { border-top: 1px solid var(--line); }
+.index-title { margin: 0 0 4px; font-size: 11px; color: var(--muted); }
+.index-title:only-child { margin-bottom: 0; }
 .sync-measurements {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 125px), 1fr));

@@ -1,4 +1,4 @@
-import { type Metric, type Network, type Reading, type State } from "../../shared/status.js";
+import { type BitcoinIndexName, type BitcoinIndexReading, type BitcoinIndexes, type Metric, type Network, type Reading, type State } from "../../shared/status.js";
 import { record, type Endpoint } from "./config.js";
 import { ProbeError, RpcError, readJson, rpc, statusOnly } from "./http.js";
 
@@ -26,7 +26,25 @@ export interface Observation {
 }
 export type BaseProbe = Observation | { book: Record<string, unknown>; backend: Record<string, unknown>; available: boolean };
 
+async function readBitcoinIndexes(endpoint: Endpoint, timeout: number): Promise<BitcoinIndexes> {
+  // getindexinfo only lists running indexes. Errors (e.g. unavailable method or
+  // RPC allowlist) don't establish whether any index is enabled.
+  let result: Record<string, unknown> | undefined;
+  try { if (timeout > 0) result = record(await rpc(endpoint, timeout, "getindexinfo", [], true)); }
+  catch { /* The chain probe remains valid even when this optional call fails. */ }
+  function index(name: BitcoinIndexName): BitcoinIndexReading {
+    if (!result) return { state: "unavailable" };
+    if (!Object.hasOwn(result, name)) return { state: "disabled" };
+    const entry = record(result[name]);
+    const height = nat(entry?.best_block_height);
+    if (height === undefined || typeof entry?.synced !== "boolean") return { state: "unavailable" };
+    return { state: entry.synced ? "synced" : "syncing", height };
+  }
+  return { txindex: index("txindex"), txospenderindex: index("txospenderindex") };
+}
+
 async function bitcoin(network: Network, endpoint: Endpoint, timeout: number): Promise<Observation> {
+  const start = performance.now();
   let info;
   try { info = record(await rpc(endpoint, timeout, "getblockchaininfo", [], true)); }
   catch (error) {
@@ -50,8 +68,11 @@ async function bitcoin(network: Network, endpoint: Endpoint, timeout: number): P
   if (stamp.getTime()) rows.push(metric("最新区块时间", stamp.toISOString()));
   const synced = !ibd && headers === height;
   return {
-    reading: reading(synced ? "synced" : "syncing", rows,
-      "按本节点所见的区块头判断，不代表已核对外部网络高度。", fraction(info.verificationprogress)),
+    reading: {
+      ...reading(synced ? "synced" : "syncing", rows,
+        "按本节点所见的区块头判断，不代表已核对外部网络高度。", fraction(info.verificationprogress)),
+      bitcoinIndexes: await readBitcoinIndexes(endpoint, timeout - (performance.now() - start) / 1000),
+    },
     available: true, tip: { height, headers, hash, synced },
   };
 }
