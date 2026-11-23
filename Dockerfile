@@ -17,5 +17,6 @@ COPY --from=build /app/dist/web ./dist/web
 RUN install -d -m 0700 -o 65532 -g 65532 /data && touch /data/.keep && chown 65532:65532 /data/.keep
 
 USER 65532:65532
+VOLUME /data
 EXPOSE 8080
 CMD ["node", "dist/server/backend/src/index.js", "--config", "/config/config.toml", "--host", "0.0.0.0", "--port", "8080", "--history", "/data/history.sqlite3"]

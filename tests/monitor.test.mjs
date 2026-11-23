@@ -223,7 +223,9 @@ test("co-deploy keeps static frontend and read-only status", async (t) => {
   const config = await fetch(base + "/config.js");
   assert.match(await config.text(), /"\/api\/status"/);
   const ticker = await fetch(base + "/app.js");
-  assert.match(await ticker.text(), /CHAIN_SYNC_MONITOR_API_URL/);
+  const script = await ticker.text();
+  assert.match(script, /CHAIN_SYNC_MONITOR_API_URL/);
+  assert.match(script, /credentials: "same-origin"/);
   const head = await fetch(base + "/api/status", { method: "HEAD" });
   assert.equal(await head.text(), "");
   assert.match(head.headers.get("content-type"), /^application\/json/);

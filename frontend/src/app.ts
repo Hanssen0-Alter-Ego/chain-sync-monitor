@@ -181,7 +181,7 @@ async function loadStatus() {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 10000);
   try {
-    const response = await fetch(statusUrl, { cache: "no-store", signal: controller.signal, credentials: "omit" });
+    const response = await fetch(statusUrl, { cache: "no-store", signal: controller.signal, credentials: "same-origin" });
     if (!response.ok) throw new Error("Status request failed");
     const data = await response.json();
     if (!data || !Array.isArray(data.services)) throw new Error("Invalid status");
