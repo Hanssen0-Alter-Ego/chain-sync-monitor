@@ -19,10 +19,10 @@ docker compose up -d --build
 
 1. 后端把各服务的 `url` 指向它能访问的私网、VPN 地址或加密隧道。不要把节点 RPC 暴露到公网；Bitcoin RPC 的 Basic Auth 不加密。密钥、RPC 地址和 uptime 库只放后端；容器 UID/GID 65532 需可读配置与对应凭据文件。
 2. 把 `cors_origins = ["https://status.example.com"]` 加入已有的 `[monitor]`，填写实际的前端 origin。后端运行 `MONITOR_API_ONLY=1 docker compose up -d --build`。参考 [Caddyfile.api.example](Caddyfile.api.example)，通过 HTTPS 只反代 `/api/status`。可用 `curl -i -H 'Origin: https://status.example.com' https://status-api.example.com/api/status` 检查。
-3. 在 Netlify 导入仓库，根目录保持默认；Build 环境变量设置 `STATUS_API_URL=https://status-api.example.com/api/status`。[netlify.toml](netlify.toml) 会只构建前端并发布 `dist/web`。需要跨域访问的预览地址也要显式加入 CORS 列表。不要把 RPC URL 或密码填进 Netlify。
+3. 在 Netlify 导入仓库，根目录保持默认；Build 环境变量设置 `STATUS_API_URL=https://status-api.example.com/api/status`。[netlify.toml](netlify.toml) 会只构建前端并发布 `dist/web`。在 `[monitor]` 设置 `cors_netlify_site = "chain-sync-monitor"`（换成你的 Netlify 站点名），即可放行该站点的默认域名和按部署 ID 生成的[固定链接](https://docs.netlify.com/deploy/deploy-overview/)，无需逐个添加。PR 预览地址、分支部署地址和自定义域名仍须显式加入 `cors_origins`。不要把 RPC URL 或密码填进 Netlify。
 4. 可选：在各服务配置加 `public_url`，卡片标题就会链接到该公开地址，不使用探测用的 `url`。
 
-浏览器只请求后端缓存的状态，不直接请求节点。CORS 不是认证；能访问状态 API 的人都能看到公开的服务状态。私有面板可把前后端放在同一个有认证的反代后面。
+浏览器只请求后端缓存的状态，不直接请求节点。CORS 不是认证；Netlify 设置只匹配 Origin 格式，不验证部署归属。能访问状态 API 的人都能看到公开的服务状态。私有面板可把前后端放在同一个有认证的反代后面。
 
 ## 指标和历史
 

@@ -9,6 +9,19 @@ const assets = [
   ["/config.js", "config.js", "text/javascript"], ["/app.js", "app.js", "text/javascript"],
   ["/i18n.js", "i18n.js", "text/javascript"],
 ];
+function allowsOrigin(config: Config, origin: string): boolean {
+  if (config.corsOrigins.has(origin)) return true;
+  const site = config.corsNetlifySite;
+  if (!site || !origin.startsWith("https://")) return false;
+  // Browser Origin is serialized without a path, credentials, or the default port.
+  const host = origin.slice("https://".length);
+  const suffix = `${site}.netlify.app`;
+  if (host === suffix) return true;
+  const deploySuffix = `--${suffix}`;
+  if (site.length + 26 > 63 || !host.endsWith(deploySuffix)) return false;
+  const id = host.slice(0, -deploySuffix.length);
+  return id.length === 24 && /^[a-f0-9]+$/.test(id);
+}
 export function makeServer(config: Config, snapshot: () => Snapshot, staticDir?: string) {
   const files = new Map<string, [Buffer, string]>(staticDir
     ? assets.map(([route, file, type]) => [route, [readFileSync(resolve(staticDir, file)), type]]) : []);
@@ -17,11 +30,10 @@ export function makeServer(config: Config, snapshot: () => Snapshot, staticDir?:
     const reply = (status: number, mime: string, body: string | Buffer) => send(response, status, mime, body, method === "HEAD");
     if (request.url === "/api/status") {
       const origin = request.headers.origin;
-      response.setHeader("Vary", "Origin");
-      if (origin && config.corsOrigins.has(origin)) {
-        response.setHeader("Access-Control-Allow-Origin", origin);
-      }
-      if (method === "OPTIONS" && origin && config.corsOrigins.has(origin) &&
+      const allowed = origin !== undefined && allowsOrigin(config, origin);
+      response.setHeader("Vary", method === "OPTIONS" ? "Origin, Access-Control-Request-Method" : "Origin");
+      if (allowed) response.setHeader("Access-Control-Allow-Origin", origin);
+      if (method === "OPTIONS" && allowed &&
           ["GET", "HEAD"].includes(request.headers["access-control-request-method"] ?? "")) {
         response.setHeader("Access-Control-Allow-Methods", "GET, HEAD");
         response.writeHead(204).end();

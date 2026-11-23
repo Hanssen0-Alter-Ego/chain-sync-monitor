@@ -5,6 +5,8 @@ interval_seconds = 15
 timeout_seconds = 4
 # For a separate web frontend, add its exact origin (no path).
 # cors_origins = ["https://status.example.com"]
+# Opt in to the Netlify site domain and its deployment-ID permalinks.
+# cors_netlify_site = "chain-sync-monitor"
 
 [networks.mainnet.ckb]
 url = "http://127.0.0.1:8114"

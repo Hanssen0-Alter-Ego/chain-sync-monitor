@@ -211,6 +211,52 @@ test("validates RPC URLs, public links and exact CORS configuration", (t) => {
   writeFileSync(path, '[networks.mainnet.btc]\nurl="http://private-host"\npublic_url="javascript:alert(1)"');
   assert.throws(() => loadConfig(path), /public_url/);
 });
+test("Netlify permalink CORS is opt-in, site-specific, and shared by reads and preflights", async (t) => {
+  const path = join(directory(t), "config.toml");
+  const id = "6b04b5a37287b99d17100bcc";
+  const site = "chain-sync-monitor";
+  const permalink = `https://${id}--${site}.netlify.app`;
+  for (const invalid of ["", "https://site.netlify.app", "*.netlify.app", "Site", "bad--site", "-site", "site-", "a".repeat(64), "site\n", 123]) {
+    writeFileSync(path, `[monitor]\ncors_netlify_site = ${JSON.stringify(invalid)}\n`);
+    assert.throws(() => loadConfig(path), /cors_netlify_site/);
+  }
+  const explicit = "https://status.example.com";
+  const branch = `https://staging--${site}.netlify.app`;
+  writeFileSync(path, `[monitor]\ncors_origins = ["${explicit}", "${branch}"]\n`);
+  const disabled = await listen(t, makeServer(loadConfig(path), () => ({})));
+  assert.equal((await fetch(disabled + "/api/status", {headers: {Origin: permalink}}))
+    .headers.get("access-control-allow-origin"), null);
+  writeFileSync(path, `[monitor]\ncors_netlify_site = "${site}"\ncors_origins = ["${explicit}", "${branch}"]\n`);
+  const base = await listen(t, makeServer(loadConfig(path), () => ({})));
+  const status = base + "/api/status";
+  const allowed = [permalink, `https://${"f".repeat(24)}--${site}.netlify.app`, `https://${site}.netlify.app`, explicit, branch];
+  const denied = [
+    "null", permalink.replace("https:", "http:"), permalink + ":443", permalink + ":8443",
+    permalink + "/", permalink + "/api/status", permalink + "?", permalink + "#fragment",
+    permalink + ".", permalink + ".example.com", `https://other.${id}--${site}.netlify.app`,
+    `https://${id}--other-site.netlify.app`, `https://${id}-${site}.netlify.app`,
+    `https://${id.slice(1)}--${site}.netlify.app`, `https://g${id.slice(1)}--${site}.netlify.app`,
+    `https://${id}--${site}-other.netlify.app`, `https://deploy-preview-42--${site}.netlify.app`,
+    `https://user@${id}--${site}.netlify.app`, permalink + ", " + explicit,
+  ];
+  for (const [origin, permitted] of [...allowed.map(origin => [origin, true]), ...denied.map(origin => [origin, false])]) {
+    for (const method of ["GET", "HEAD", "OPTIONS"]) {
+      const headers = { Origin: origin };
+      if (method === "OPTIONS") headers["Access-Control-Request-Method"] = "GET";
+      const response = await fetch(status, {method, headers});
+      assert.equal(response.status, method === "OPTIONS" ? permitted ? 204 : 405 : 200, origin);
+      assert.equal(response.headers.get("access-control-allow-origin"), permitted ? origin : null, origin);
+      assert.equal(response.headers.get("access-control-allow-credentials"), null);
+      if (method === "OPTIONS" && permitted) assert.equal(response.headers.get("access-control-allow-methods"), "GET, HEAD");
+    }
+  }
+  const unsupported = await fetch(status, {method: "OPTIONS", headers: {
+    Origin: permalink, "Access-Control-Request-Method": "POST",
+  }});
+  assert.equal(unsupported.status, 405);
+  assert.equal(unsupported.headers.get("access-control-allow-methods"), null);
+  assert.equal((await fetch(base, {headers: {Origin: permalink}})).headers.get("access-control-allow-origin"), null);
+});
 test("co-deploy keeps static frontend and read-only status", async (t) => {
   const dir = directory(t), path = join(dir, "config.toml");
   writeFileSync(path, "");

@@ -24,6 +24,7 @@ export interface Config {
   timeoutSeconds: number;
   historyPath: string;
   corsOrigins: Set<string>;
+  corsNetlifySite?: string;
 }
 export class ConfigError extends Error {}
 export function record(value: unknown): Record<string, unknown> | undefined {
@@ -102,6 +103,11 @@ export function loadConfig(path: string): Config {
   const origins = opts.cors_origins ?? [];
   if (!Array.isArray(origins)) throw new ConfigError("monitor.cors_origins 应是数组。");
   const corsOrigins = new Set(origins.map(origin));
+  const corsNetlifySite = opts.cors_netlify_site;
+  if (corsNetlifySite !== undefined && (typeof corsNetlifySite !== "string" || !corsNetlifySite.length
+      || corsNetlifySite.length > 63 || /[^a-z0-9-]|^-|-$|--/.test(corsNetlifySite))) {
+    throw new ConfigError("monitor.cors_netlify_site 必须是小写 Netlify 站点名，不含域名或路径。");
+  }
   const endpoints: Config["endpoints"] = { mainnet: new Map(), testnet3: new Map() };
   const configured = table(raw.networks ?? {}, "networks");
   if (Object.keys(configured).some((net) => !Object.hasOwn(endpoints, net))) {
@@ -150,7 +156,7 @@ export function loadConfig(path: string): Config {
     }
   }
   return {
-    endpoints, corsOrigins, historyPath: resolve(dir, historyPath),
+    endpoints, corsOrigins, corsNetlifySite, historyPath: resolve(dir, historyPath),
     host: listenHost(opts.host ?? "127.0.0.1"), port: listenPort(opts.port ?? 8080),
     intervalSeconds: number(opts.interval_seconds ?? 30, 1, 3600, "monitor.interval_seconds"),
     timeoutSeconds: number(opts.timeout_seconds ?? 5, 0.1, 60, "monitor.timeout_seconds"),
