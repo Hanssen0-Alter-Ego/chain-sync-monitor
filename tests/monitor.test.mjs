@@ -110,6 +110,7 @@ url = "${target}/api/testnet/v1/statistics/network"
 id = "asset-api"
 label = "Asset API"
 url = "${target}/private-asset/healthcheck"
+github_url = "https://github.com/example/project/"
 `);
   const cfg = loadConfig(join(dir, "monitor.toml"));
   const monitor = new Monitor(cfg, new HistoryStore(cfg.historyPath));
@@ -143,6 +144,7 @@ url = "${target}/private-asset/healthcheck"
   assert.equal(get("mainnet-ckbadger").progress, 0.2);
   assert.equal(get("mainnet-ckbadger").publicUrl, "https://explorer.example.com/");
   assert.equal(get("testnet3-http:asset-api").state, "online");
+  assert.equal(get("testnet3-http:asset-api").githubUrl, "https://github.com/example/project");
   assert.equal(get("testnet3-http:asset-api").availability.windows[0].available, 1);
   const foreign = await fetch(base + "/api/status", { headers: { Origin: "https://other.netlify.app" } });
   assert.equal(foreign.headers.get("access-control-allow-origin"), null);
@@ -209,6 +211,77 @@ url = "${upstream}/healthcheck"
   assert.equal(services[1].probeAvailable, false);
   assert.deepEqual(services[1].availability.windows.map(window => [window.available, window.total]), [[1, 2], [1, 2]]);
 });
+test("SPV cache, direct Core tip and optional CKB verification keep distinct observations", async (t) => {
+  const at = 1_700_000_000;
+  let cache = {bitcoinTip:{height:110,observedAt:at},localHeaderTip:{height:105,observedAt:null},confirmedClient:{startHeight:50,endHeight:90,observedAt:at}};
+  const missing = {...badRequest,error:{code:-32601}};
+  const cell=Buffer.alloc(113);cell[0]=7;cell.writeUInt32LE(70,33);cell.writeUInt32LE(95,37);
+  const upstream = await listen(t, createServer(async (req,res) => {
+    const {method}=await payload(req);
+    if (method==="getTxProof") return json(res,badRequest);
+    if (method==="getSyncStatus") return json(res,cache ? reply(cache) : missing);
+    if (method==="get_cells") return json(res,reply({objects:[{output_data:"0x07"},{output_data:"0x"+cell.toString("hex")}]}));
+    if (method==="getblockchaininfo") return json(res,reply({chain:"main",blocks:120,headers:120,initialblockdownload:false}));
+    return json(res,missing);
+  }));
+  const path=join(directory(t),"config.toml");
+  const cfg=`[networks.mainnet.spv]\nurl="${upstream}/spv"\n`;
+  const poll=async (toml)=>{
+    writeFileSync(path,toml);
+    const settings=loadConfig(path);
+    const m=new Monitor(settings,new HistoryStore(settings.historyPath)); await m.poll();
+    return m.snapshot.services.find(row=>row.kind==="spv");
+  };
+  let service=await poll(cfg);
+  let metrics=new Map(service.metrics.map(m=>[m.label,m]));
+  assert.equal(service.probeAvailable,true);
+  assert.equal(service.state,"unknown");
+  assert.equal(metrics.get("SPV 观测的 BTC 高度").value,110);
+  assert.equal(metrics.get("本地 SPV 高度").value,105);
+  assert.equal(metrics.get("SPV 缓存的链上高度").observedAt,new Date(at*1000).toISOString());
+  service=await poll(cfg+`
+[networks.mainnet.spv.type_script]
+code_hash="0x${"ab".repeat(32)}"
+hash_type="type"
+args="0x${"cd".repeat(32)}0100"
+[networks.mainnet.ckb]
+url="${upstream}/ckb"
+[networks.mainnet.btc]
+url="${upstream}/btc"
+`);
+  metrics=new Map(service.metrics.map(m=>[m.label,m.value]));
+  assert.equal(metrics.get("链上 SPV 高度"),95);
+  assert.equal(metrics.get("本地 BTC 高度"),120);
+  assert.equal(metrics.has("SPV 缓存的链上高度"),false);
+  cache={bitcoinTip:null,localHeaderTip:null,confirmedClient:null};
+  service=await poll(cfg);
+  assert.deepEqual(service.metrics.map(m=>m.label),["证明 RPC"]);
+  cache=undefined;
+  service=await poll(cfg);
+  assert.equal(service.probeAvailable,true);
+  assert.match(service.note,/type_script/);
+});
+
+test("Blockbook falls back to its backend blocks only with a matching chain and no error", async (t) => {
+  let upstream = {chain:"main",blocks:100,headers:140};
+  const node=await listen(t,createServer((_req,res)=>json(res,{
+    backend:upstream,blockbook:{bestHeight:91,inSync:true,inSyncMempool:true},
+  })));
+  const path=join(directory(t),"config.toml");
+  writeFileSync(path,`[networks.mainnet.blockbook]\nurl="${node}"\n`);
+  const cfg=loadConfig(path);
+  const monitor=new Monitor(cfg,new HistoryStore(cfg.historyPath));
+  const check=async()=>{ await monitor.poll(); return monitor.snapshot.services[0]; };
+  let service=await check();
+  assert.equal(service.state,"unknown");
+  assert.equal(service.metrics.find(row=>row.label==="Blockbook 上游高度").value,100);
+  for (const invalid of [{blocks:100},{chain:"test",blocks:100},{chain:"main",blocks:100,error:"warming up"},{chain:"main",blocks:-1},{chain:"main",blocks:"100"}]) {
+    upstream=invalid;
+    service=await check();
+    assert.ok(!service.metrics.some(row=>row.label==="Blockbook 上游高度"));
+  }
+});
+
 test("never forwards authorization via redirects, and bounds response time/body", async (t) => {
   let arrived = false;
   const redirectTarget = await listen(t, createServer((_req,res) => { arrived = true; res.end(); }));
