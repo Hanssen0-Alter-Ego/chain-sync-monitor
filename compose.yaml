@@ -2,6 +2,8 @@ services:
   monitor:
     build: .
     image: ghcr.io/hanssen0-alter-ego/chain-sync-monitor:latest
+    environment:
+      MONITOR_API_ONLY: "${MONITOR_API_ONLY:-0}"
     ports:
       - "127.0.0.1:8080:8080"
     volumes:

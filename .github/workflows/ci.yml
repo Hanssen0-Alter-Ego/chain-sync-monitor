@@ -11,17 +11,16 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.11", "3.14"]
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-node@v4
         with:
-          python-version: ${{ matrix.python-version }}
-      - run: python -m unittest discover -s tests -v
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - run: npm test
 
   image-check:
     if: github.event_name == 'pull_request'

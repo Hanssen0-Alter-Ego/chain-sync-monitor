@@ -1,6 +1,6 @@
 /config/
 /config.toml
-__pycache__/
-*.py[cod]
 .env
 /history.sqlite3*
+/node_modules/
+/dist/
