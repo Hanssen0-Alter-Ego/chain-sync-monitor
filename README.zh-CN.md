@@ -37,3 +37,7 @@ docker compose up -d --build
 本地用 Node.js 24，执行 `npm ci && npm test`。PR 跑测试并构建 Docker；`main` 测试通过会发布 GHCR 镜像。
 
 内置 GitHub 图标链接上游仓库；自定义 HTTP 探测可通过 `github_url = "https://github.com/owner/repo"` 添加图标，与 `public_url` 独立。
+
+Bitcoin Core 的监控账户可用 `rpcwhitelist=monitor:getblockchaininfo,getindexinfo` 限制 RPC 权限。未授权 `getindexinfo` 时只影响索引状态，不影响链高度监控。
+
+面板把最近 24 小时的探测画成 12 格，从左到右每格两小时，分别表示全部成功、部分失败、全部失败和无样本。无样本不算停机；百分比仍按实际探测次数计算。旧版后端在升级前仅显示百分比。

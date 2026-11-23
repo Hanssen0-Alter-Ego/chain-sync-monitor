@@ -21,7 +21,9 @@ export interface Reading {
   progress?: number;
   bitcoinIndexes?: BitcoinIndexes;
 }
+export interface AvailabilityBin { startMinute: number; available: number; total: number }
 export interface Availability {
+  dayBins?: AvailabilityBin[];
   windows: {seconds: number; ratio: number | null; available: number; total: number}[];
 }
 export interface Service extends Reading {

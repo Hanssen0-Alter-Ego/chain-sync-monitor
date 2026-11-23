@@ -77,14 +77,56 @@ test("GitHub repository icons do not conflate public service links or arbitrary 
 test("built dashboard renders two dimensions and preserves the expanded row after refresh", async () => {
   class Element {
     children = [];
+    tagName = "DIV";
+    nodeType = 1;
+    get nodeName() { return this.tagName.toUpperCase(); }
+    get childNodes() { return [...this.children, ...this.selectors.values()].filter(item => item instanceof Element); }
+    get firstChild() { return this.childNodes[0] ?? null; }
+    get nextSibling() {
+      const siblings = this.parentElement?.childNodes ?? [];
+      return siblings[siblings.indexOf(this) + 1] ?? null;
+    }
+    get isConnected() { return this === globalThis.document || this.parentElement?.isConnected === true; }
+    getAttributeNames() { return [...Object.keys(this.attrs), ...Object.keys(this.dataset).map(key => key === "renderKey" ? "data-render-key" : `data-${key}`), ...(this.hidden === true ? ["hidden"] : []), ...(this.open ? ["open"] : []), ...(this.textContent === undefined ? [] : ["test-text"]), ...(this.title === undefined ? [] : ["title"]), ...(this.href === undefined ? [] : ["href"])]; }
+    hasAttribute(key) { return this.getAttributeNames().includes(key); }
+    removeAttribute(key) { if (key === "hidden") this.hidden = false; else delete this.attrs[key]; }
+    insertBefore(child, anchor) {
+      if (child.stubSelector) {
+        this.selectors.set(child.stubSelector, child);
+        child.parentElement = this;
+        return child;
+      }
+      child.parentElement?.removeChild(child);
+      const index = this.children.indexOf(anchor);
+      this.children.splice(index < 0 ? this.children.length : index, 0, child);
+      child.parentElement = this;
+      return child;
+    }
+    removeChild(child) {
+      if (child.stubSelector) this.selectors.delete(child.stubSelector);
+      else {
+        const index = this.children.indexOf(child);
+        if (index >= 0) this.children.splice(index, 1);
+      }
+      child.parentElement = undefined;
+    }
+    closest(selector) {
+      if (selector === "[hidden]" && this.hidden === true) return this;
+      if (selector === "article[data-render-key]" && this.dataset.renderKey) return this;
+      return this.parentElement?.closest(selector) ?? null;
+    }
     dataset = {};
     attrs = {};
     selectors = new Map();
     handlers = new Map();
     querySelector(selector) {
+      if (selector === ".network" || selector === "article") return this;
+      if (selector === ".service-details > summary") return this.querySelector(".service-details").querySelector("summary");
       if (!this.selectors.has(selector)) {
         const node = new Element();
         node.parentElement = this;
+        node.stubSelector = selector;
+        if (selector.includes("details") || selector === ".uptime-breakdown") node.tagName = "DETAILS";
         this.selectors.set(selector, node);
       }
       return this.selectors.get(selector);
@@ -100,16 +142,30 @@ test("built dashboard renders two dimensions and preserves the expanded row afte
       return output;
     }
     cloneNode() { return new Element(); }
-    append(...children) { this.children.push(...children); }
+    append(...children) { for (const child of children) { if (child instanceof Element) child.parentElement = this; this.children.push(child); } }
     replaceChildren(...children) { this.children = children; }
     hasChildNodes() { return this.children.length > 0; }
     addEventListener(event, listener) { this.handlers.set(event, listener); }
-    setAttribute(key, value) { this.attrs[key] = value; }
-    getAttribute(key) { return this.attrs[key] ?? null; }
+    setAttribute(key, value) {
+      if (key === "data-render-key") this.dataset.renderKey = value;
+      else if (key.startsWith("data-")) this.dataset[key.slice(5)] = value;
+      else if (key === "hidden") this.hidden = true;
+      else if (key === "test-text") this.textContent = value;
+      else if (key === "title" || key === "href") this[key] = value;
+      else this.attrs[key] = value;
+    }
+    getAttribute(key) {
+      if (key === "data-render-key") return this.dataset.renderKey ?? null;
+      if (key.startsWith("data-")) return this.dataset[key.slice(5)] ?? null;
+      if (key === "hidden") return this.hidden ? "" : null;
+      if (key === "test-text") return this.textContent ?? null;
+      if (key === "href" || key === "title") return this[key] ?? null;
+      return this.attrs[key] ?? null;
+    }
     matches(selector) { return selector === ".service-details > summary" && this.parentElement?.dataset.serviceId !== undefined; }
     focus() { globalThis.document.activeElement = this; }
   }
-  const original = Object.fromEntries(["document", "window", "navigator", "fetch"].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  const original = Object.fromEntries(["document", "window", "navigator", "fetch", "HTMLElement", "HTMLMeterElement", "HTMLProgressElement", "Node"].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   const document = new Element();
   document.documentElement = {};
   document.createDocumentFragment = () => new Element();
@@ -125,7 +181,10 @@ test("built dashboard renders two dimensions and preserves the expanded row afte
       kind === "ckb" ? [{label:"节点区块高度",value:10000},{label:"已知区块高度",value:10001},{label:"索引器高度",value:10000}] :
       kind === "ckbadger" ? [{label:"索引高度",value:0},{label:"CKB 目标高度",value:1000}] : [],
     progress: kind === "ckbadger" ? 0 : undefined,
-    availability: {windows: [{seconds: 86_400, ratio: 0.75, available: kind === "spv" ? 0 : kind === "btc" ? 0 : 3, total: kind === "spv" ? 0 : 4}]},
+    availability: {windows: [{seconds: 86_400, ratio: 0.75, available: kind === "spv" ? 0 : kind === "btc" ? 0 : 3, total: kind === "spv" ? 0 : 4}],
+      dayBins: kind === "blockbook" ? Array.from({length: 12}, (_, i) => ({
+        startMinute: 30_000_000 + i * 120, available: i === 8 || i === 10 ? 1 : 0, total: i === 10 ? 2 : i === 8 || i === 11 ? 1 : 0,
+      })) : undefined},
   }));
   services.push(
     { id: "testnet3-http:btc-asset-api", network:"testnet3", kind:"http", label:"BTC Asset API", state:"online", probeAvailable:true,
@@ -134,18 +193,21 @@ test("built dashboard renders two dimensions and preserves the expanded row afte
       metrics:[], availability:{windows:[]} },
   );
   try {
+    for (const key of ["HTMLElement", "HTMLMeterElement", "HTMLProgressElement"]) globalThis[key] = Element;
+    globalThis.Node = { TEXT_NODE: 3 };
     Object.defineProperty(globalThis, "document", { configurable: true, value: document });
     Object.defineProperty(globalThis, "navigator", { configurable: true, value: { languages: ["en-US"] } });
     const preferences = new Map();
     const listeners = new Map();
-    globalThis.window = { setTimeout() {}, setInterval() {}, clearTimeout() {},
+    const timers = [];
+    globalThis.window = { setTimeout(fn, delay) { timers.push({ fn, delay }); }, setInterval() {}, clearTimeout() {},
       addEventListener(event, fn) { listeners.set(event, fn); },
       localStorage: { getItem(key) { return preferences.get(key) ?? null; }, setItem(key, value) { preferences.set(key, value); } },
     };
     globalThis.fetch = async () => new Response(JSON.stringify({ updatedAt: new Date().toISOString(), intervalSeconds: 30, services }));
     await import("../dist/web/app.js");
     await new Promise(resolve => setImmediate(resolve));
-    const section = () => document.querySelector("#networks").children[0].children[0];
+    const section = () => document.querySelector("#networks").children[0];
     const card = index => section().querySelector(".cards").children[index];
     assert.equal(section().querySelector(".network-summary").textContent, "4 / 5 online");
     assert.equal(card(3).querySelector(".probe-state").querySelector(".state-label").textContent, "Online");
@@ -167,11 +229,31 @@ test("built dashboard renders two dimensions and preserves the expanded row afte
     assert.equal(card(2).querySelector("meter").value, .75);
     assert.match(template, /<summary>[^]*?class="service-uptime"[^]*?<\/summary>/);
     assert.equal(card(2).querySelector(".service-uptime-value").textContent, "75%");
+    const history = card(2).querySelector(".uptime-history");
+    assert.equal(history.hidden, false);
+    assert.deepEqual(history.children.slice(8).map(cell => cell.dataset.state), ["up", "empty", "mixed", "down"]);
+    assert.match(history.children[10].title, /Some checks failed.*1\/2 checks/);
+    assert.match(card(2).querySelector(".uptime-history-detail").querySelector(".uptime-history-caption").textContent, /Two-hour probe results, oldest to newest/);
+    const historyDetail = card(2).querySelector(".uptime-history-detail");
+    assert.equal(historyDetail.querySelector(".uptime-history-key").children.length, 4);
+    assert.equal(historyDetail.querySelector(".uptime-breakdown").querySelector(".uptime-history-ranges").children[10].textContent, history.children[10].title);
+    assert.equal(card(3).querySelector(".uptime-history").hidden, true);
+    assert.equal(card(3).querySelector(".uptime-history-detail").querySelector(".uptime-history-caption").textContent, "Uptime timeline unavailable");
+    assert.match(template, /href="#networks">Skip to Service Status<\/a>/);
+    assert.match(template, /id="networks" tabindex="-1"/);
+    assert.match(template, /name="theme-color" content="#090d10"/);
+    assert.match(template, /id="refresh-announcement"[^>]*aria-live="polite"/);
+    assert.doesNotMatch(template, /id="freshness"[^>]*aria-live/);
+    assert.match(history.children[10].title, / UTC · /);
+    const announcement = document.querySelector("#refresh-announcement");
+    const initialAnnouncement = announcement.textContent;
+    await timers.filter(timer => timer.delay === 30_000).at(-1).fn();
+    assert.equal(announcement.textContent, initialAnnouncement);
     assert.equal(card(0).querySelector(".service-uptime-value").textContent, "0%");
     assert.equal(card(3).querySelector(".service-uptime-value").textContent, "No samples");
     assert.match(card(2).querySelector(".service-details").querySelector("summary").attrs["aria-label"], /24-hour uptime 75%/);
-    assert.equal(document.querySelector("#networks").children[0].children[1].querySelector("h2").textContent, "Testnet");
-    const httpRows = document.querySelector("#networks").children[0].children[1].querySelector(".cards").children;
+    assert.equal(document.querySelector("#networks").children[1].querySelector("h2").textContent, "Testnet");
+    const httpRows = document.querySelector("#networks").children[1].querySelector(".cards").children;
     assert.equal(httpRows[0].querySelector(".kind").hidden, true);
     assert.equal(httpRows[0].querySelector(".http-measurements").querySelector(".http-status").textContent, "200");
     assert.equal(httpRows[0].querySelector(".http-measurements").querySelector(".http-latency").textContent, "0 ms");
@@ -183,16 +265,65 @@ test("built dashboard renders two dimensions and preserves the expanded row afte
     details.open = true;
     details.querySelector("summary").focus();
     await document.querySelector("#refresh").handlers.get("click")();
-    assert.notEqual(card(3).querySelector(".service-details"), details);
+    assert.equal(card(3).querySelector(".service-details"), details);
     assert.equal(card(3).querySelector(".service-details").open, true);
-    assert.equal(card(2).querySelector(".service-details").open, false);
+    assert.notEqual(card(2).querySelector(".service-details").open, true);
     assert.equal(document.activeElement, card(3).querySelector(".service-details").querySelector("summary"));
+    assert.match(template, /<label for="language"[^]*?<svg[^>]+aria-hidden="true"[^]*?<span id="language-label">Language<\/span>[^]*?<select id="language" name="language">/);
+    const blockbookDetails = card(2).querySelector(".service-details");
+    blockbookDetails.open = true;
+    const breakdown = historyDetail.querySelector(".uptime-breakdown");
+    breakdown.open = true;
+    const breakdownSummary = breakdown.querySelector("summary");
+    breakdownSummary.focus();
+    const oldRange = breakdown.querySelector(".uptime-history-ranges").children[10];
+    services[2].availability.dayBins[10].available = 2;
+    await document.querySelector("#refresh").handlers.get("click")();
+    assert.equal(card(2).querySelector(".service-details"), blockbookDetails);
+    assert.equal(historyDetail.querySelector(".uptime-breakdown"), breakdown);
+    assert.equal(breakdown.open, true);
+    assert.equal(document.activeElement, breakdownSummary);
+    assert.equal(breakdown.querySelector(".uptime-history-ranges").children[10], oldRange);
+    assert.match(oldRange.textContent, /All checks succeeded.*2\/2 checks/);
+    const savedBins = services[2].availability.dayBins;
+    delete services[2].availability.dayBins;
+    await timers.filter(timer => timer.delay === 30_000).at(-1).fn();
+    assert.equal(breakdown.hidden, true);
+    assert.equal(document.activeElement, blockbookDetails.querySelector("summary"));
+    services[2].availability.dayBins = savedBins;
+    await timers.filter(timer => timer.delay === 30_000).at(-1).fn();
+    assert.equal(breakdown.hidden, false);
+    assert.equal(breakdown.open, true);
+    const firstProject = card(2).querySelector(".github-link");
+    firstProject.focus();
+    await document.querySelector("#refresh").handlers.get("click")();
+    assert.equal(card(2).querySelector(".github-link"), firstProject);
+    assert.equal(document.activeElement, card(2).querySelector(".github-link"));
+    const refresh = document.querySelector("#refresh");
+    refresh.focus();
+    const refreshing = refresh.handlers.get("click")();
+    assert.equal(refresh.attrs["aria-disabled"], "true");
+    await refreshing;
+    assert.equal(refresh.attrs["aria-disabled"], "false");
+    assert.match(announcement.textContent, /Updated/);
+    assert.equal(document.activeElement, refresh);
+    const disconnected = card(4).querySelector(".github-link");
+    disconnected.focus();
+    const removed = services.splice(4, 1)[0];
+    await refresh.handlers.get("click")();
+    assert.equal(disconnected.isConnected, false);
+    assert.equal(document.activeElement, document.querySelector("#networks"));
+    services.splice(4, 0, removed);
+    await refresh.handlers.get("click")();
     const selector = document.querySelector("#language");
+    const languageLabel = document.querySelector("#language-label");
+    assert.equal(languageLabel.textContent, "Language");
     const select = value => { selector.value = value; selector.handlers.get("change")(); };
     assert.equal(selector.value, "auto");
     assert.equal(document.documentElement.lang, "en");
     select("zh-CN");
     assert.equal(document.documentElement.lang, "zh-CN");
+    assert.equal(languageLabel.textContent, "语言");
     assert.equal(document.querySelector("h1").textContent, "链同步监控");
     assert.equal(card(3).querySelector(".service-details").open, true);
     assert.equal(preferences.get("chain-sync-monitor.language"), "zh-CN");

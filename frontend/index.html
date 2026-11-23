@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#090d10">
   <title>Chain Sync Monitor</title>
   <meta name="description" content="Live sync and uptime for Bitcoin, CKB, and indexing services on mainnet and testnet.">
   <meta property="og:title" content="Chain Sync Monitor">
@@ -21,28 +22,40 @@
   <script type="module" src="/app.js"></script>
 </head>
 <body>
+  <a class="skip-link" href="#networks">Skip to Service Status</a>
   <main class="shell">
     <header class="page-header">
       <div>
         <h1>Chain Sync Monitor</h1>
       </div>
       <div class="toolbar">
-        <p class="freshness" id="freshness" aria-live="polite"><span class="dot"></span><span id="freshness-text">Waiting for data</span></p>
+        <p class="freshness" id="freshness"><span class="dot" aria-hidden="true"></span><span id="freshness-text">Waiting for data</span></p>
         <button type="button" id="refresh">Refresh now</button>
-        <select id="language" aria-label="Language">
-          <option id="language-auto" value="auto">Auto</option>
-          <option value="zh-CN" lang="zh-CN">简体中文</option>
-          <option value="zh-Hant" lang="zh-Hant">繁體中文</option>
-          <option value="ja" lang="ja">日本語</option>
-          <option value="fr" lang="fr">Français</option>
-          <option value="de" lang="de">Deutsch</option>
-          <option value="en" lang="en">English</option>
-        </select>
+        <div class="language-picker">
+          <label for="language" class="language-label">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true" focusable="false">
+              <circle cx="12" cy="12" r="9"></circle>
+              <ellipse cx="12" cy="12" rx="4" ry="9"></ellipse>
+              <path d="M3 12h18"></path>
+            </svg>
+            <span id="language-label">Language</span>
+          </label>
+          <select id="language" name="language">
+            <option id="language-auto" value="auto">Auto</option>
+            <option value="zh-CN" lang="zh-CN">简体中文</option>
+            <option value="zh-Hant" lang="zh-Hant">繁體中文</option>
+            <option value="ja" lang="ja">日本語</option>
+            <option value="fr" lang="fr">Français</option>
+            <option value="de" lang="de">Deutsch</option>
+            <option value="en" lang="en">English</option>
+          </select>
+        </div>
       </div>
     </header>
+    <p id="refresh-announcement" class="sr-only" aria-live="polite" aria-atomic="true"></p>
     <p class="subtitle">Sync status for Bitcoin, CKB, and indexing services</p>
     <p id="notice" class="notice" role="status" hidden></p>
-    <div id="networks"></div>
+    <div id="networks" tabindex="-1"></div>
     <template id="network-template">
       <section class="network">
         <header class="network-header">
@@ -80,7 +93,7 @@
           <p class="no-sync-data" hidden>No sync data</p>
         </div>
         <details class="service-details">
-          <summary><span class="details-label">Details</span><span class="service-uptime"><span class="service-uptime-label"></span> <span class="service-uptime-value"></span></span></summary>
+          <summary><span class="details-label">Details</span><span class="service-uptime"><span class="uptime-history" aria-hidden="true" hidden></span><span class="service-uptime-label"></span> <span class="service-uptime-value"></span></span></summary>
           <dl class="metrics"></dl>
           <div class="availability" hidden>
             <p class="availability-title" title="Based on probe samples, independent of chain sync progress">Probe availability</p>
@@ -91,7 +104,15 @@
             </div>
             <meter min="0" max="1" aria-label="24-hour uptime"></meter>
           </div>
-            <dl class="availability-windows"></dl>
+            <div class="uptime-history-detail">
+            <p class="uptime-history-caption"></p>
+            <ul class="uptime-history-key" hidden></ul>
+            <details class="uptime-breakdown" hidden>
+              <summary>Interval Breakdown</summary>
+              <ol class="uptime-history-ranges"></ol>
+            </details>
+          </div>
+          <dl class="availability-windows"></dl>
           </div>
           <p class="note" hidden></p>
         </details>

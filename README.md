@@ -23,7 +23,7 @@ docker compose -f compose.yaml -f compose.host.yaml up -d --build
 
 Open `http://127.0.0.1:8080` on that host, or forward it over SSH. The override needs Linux host networking and Docker Compose with support for `!reset`. If the monitor uses a Docker bridge instead, use `docker compose up -d --build` and configure upstream URLs reachable from that container, such as service DNS names on a shared Docker network. The container's `127.0.0.1` is not the host's loopback in bridge mode.
 
-Use a dedicated Bitcoin Core RPC user with `rpcauth` and `rpcwhitelist=monitor:getblockchaininfo`. On a shared node, adding the first whitelist denies all methods to unlisted users by default. Preserve your existing policy: use `rpcwhitelistdefault=0` if existing users should retain unrestricted RPC access, or explicitly allowlist their required methods. Verify Blockbook and SPV still connect after the change. Keep RPC on loopback, a private network, or an encrypted tunnel. The dashboard has no built-in login.
+Use a dedicated Bitcoin Core RPC user with `rpcauth` and `rpcwhitelist=monitor:getblockchaininfo,getindexinfo`. On a shared node, adding the first whitelist denies all methods to unlisted users by default. Preserve your existing policy: use `rpcwhitelistdefault=0` if existing users should retain unrestricted RPC access, or explicitly allowlist their required methods. Verify Blockbook and SPV still connect after the change. Keep RPC on loopback, a private network, or an encrypted tunnel. The dashboard has no built-in login.
 
 ## Deploy the frontend to Netlify and the backend separately
 
@@ -68,3 +68,7 @@ Node.js 24 and npm are required. Run `npm ci` and `npm test` to build the fronte
 Once the GHCR image is public, replace `up -d --build` with `pull` followed by `up -d --no-build` using the same Compose files.
 
 Built-in GitHub icons link to upstream repositories. Set `github_url = "https://github.com/owner/repo"` on a custom HTTP check to add an icon, separate from `public_url`.
+
+If Bitcoin RPC does not permit `getindexinfo`, index status is unavailable but chain polling continues.
+
+The dashboard shows the last 24 hours as 12 two-hour probe buckets, oldest first. The strip distinguishes successful, mixed, failed, and unsampled buckets; missing samples do not count as downtime. The percentage still uses individual recorded checks. Older backends show only the percentage until upgraded.

@@ -212,11 +212,19 @@ test("keeps original SQLite history, counts samples and excludes monitor gaps", 
   const now = 10000 * 60_000, samples = new Map([["mainnet-btc", true]]);
   let data = new HistoryStore(path).observe(samples, now)["mainnet-btc"];
   assert.deepEqual(data.windows.map(w => [w.available, w.total]), [[3, 5], [3, 5]]);
+  assert.equal(data.dayBins.length, 12);
+  assert.deepEqual(data.dayBins[0], { startMinute: 8561, available: 0, total: 0 });
+  assert.deepEqual(data.dayBins[11], { startMinute: 9881, available: 3, total: 5 });
   const store = new HistoryStore(path);
   data = store.observe(samples, now + 1440 * 60_000)["mainnet-btc"];
   assert.deepEqual(data.windows.map(w => [w.available, w.total]), [[1, 1], [4, 6]]);
   data = store.observe(new Map([["mainnet-btc", false]]), now + 1440 * 60_000)["mainnet-btc"];
   assert.deepEqual(data.windows.map(w => [w.available, w.total]), [[1, 2], [4, 7]]);
+  assert.deepEqual(data.dayBins[11], { startMinute: 11321, available: 1, total: 2 });
+  assert.equal(data.dayBins.slice(0, 11).every(bin => bin.total === 0), true);
+  data = store.observe(new Map([["mainnet-btc", true]]), now + 1560 * 60_000)["mainnet-btc"];
+  assert.deepEqual(data.dayBins[10], { startMinute: 11321, available: 1, total: 2 });
+  assert.deepEqual(data.dayBins[11], { startMinute: 11441, available: 1, total: 1 });
   assert.deepEqual(store.observe(new Map(), now + 20000 * 60_000), {});
 });
 test("status remains live if history database is not writable", async (t) => {

@@ -1,4 +1,4 @@
-import { currentProbe, probeTotals, projectRepository, syncComparisons, uptimeDay } from "./presentation.js";
+import { currentProbe, probeTotals, projectRepository, syncComparisons, uptimeBins, uptimeDay } from "./presentation.js";
 import { dashboardLanguage, translate, type DashboardLanguage } from "./i18n.js";
 import type { Availability, Service, Snapshot } from "../../shared/status.js";
 
@@ -46,6 +46,7 @@ const networkContainer = element(document, "#networks");
 const networkTemplate = element<HTMLTemplateElement>(document, "#network-template");
 const serviceTemplate = element<HTMLTemplateElement>(document, "#service-template");
 const freshness = element(document, "#freshness");
+const refreshAnnouncement = element(document, "#refresh-announcement");
 const freshnessText = element(document, "#freshness-text");
 const notice = element(document, "#notice");
 const refreshButton = element<HTMLButtonElement>(document, "#refresh");
@@ -53,19 +54,22 @@ const languageSelect = element<HTMLSelectElement>(document, "#language");
 let numberFormat: Intl.NumberFormat;
 let percentFormat: Intl.NumberFormat;
 let timeFormat: Intl.DateTimeFormat;
+let binTimeFormat: Intl.DateTimeFormat;
 
 function applyLanguage() {
   language = resolveLanguage(selectedLanguage);
   numberFormat = new Intl.NumberFormat(language, { maximumFractionDigits: 6 });
   percentFormat = new Intl.NumberFormat(language, { style: "percent", maximumFractionDigits: 2 });
   timeFormat = new Intl.DateTimeFormat(language, { dateStyle: "short", timeStyle: "medium" });
+  binTimeFormat = new Intl.DateTimeFormat(language, { dateStyle: "short", timeStyle: "short", timeZone: "UTC" });
   document.documentElement.lang = language;
   document.title = t("链同步监控");
   element(document, "h1").textContent = document.title;
   element(document, ".subtitle").textContent = t("Bitcoin、CKB 及索引服务的同步状态");
+  element(document, ".skip-link").textContent = t("跳至服务状态");
   refreshButton.textContent = t("立即刷新");
   languageSelect.value = selectedLanguage;
-  languageSelect.setAttribute("aria-label", t("语言"));
+  element(document, "#language-label").textContent = t("语言");
   element(document, "#language-auto").textContent = t("自动");
 }
 
@@ -75,16 +79,56 @@ let pending = false;
 let failure = false;
 let timer: number | undefined;
 
+// Match service and network containers by key; patch stable descendants in place.
+// Preserve disclosure state and existing text nodes for accessibility cursors.
+function patchChildren(target: Node, source: Node) {
+  const key = (node: Node | null) => node instanceof HTMLElement ? node.dataset.renderKey : undefined;
+  const previous = Array.from(target.childNodes);
+  const keyed = new Map(previous.filter(node => key(node)).map(node => [key(node), node]));
+  let anchor = target.firstChild;
+  for (const fresh of Array.from(source.childNodes)) {
+    const id = key(fresh);
+    let current = id ? keyed.get(id) ?? null : key(anchor) ? null : anchor;
+    if (!current || current.nodeName !== fresh.nodeName) {
+      target.insertBefore(fresh, anchor);
+      continue;
+    }
+    if (current !== anchor) target.insertBefore(current, anchor);
+    if (current instanceof HTMLElement && fresh instanceof HTMLElement) {
+      for (const name of current.getAttributeNames()) {
+        if (!(current.tagName === "DETAILS" && name === "open") && !fresh.hasAttribute(name)) current.removeAttribute(name);
+      }
+      for (const name of fresh.getAttributeNames()) {
+        const value = fresh.getAttribute(name)!;
+        if (current.getAttribute(name) !== value) current.setAttribute(name, value);
+      }
+      if (current instanceof HTMLMeterElement && fresh instanceof HTMLMeterElement && current.value !== fresh.value) current.value = fresh.value;
+      if (current instanceof HTMLProgressElement && fresh instanceof HTMLProgressElement && current.value !== fresh.value) current.value = fresh.value;
+      patchChildren(current, fresh);
+    } else if (current.nodeType === Node.TEXT_NODE) {
+      if (current.nodeValue !== fresh.nodeValue) current.nodeValue = fresh.nodeValue;
+    } else if (!current.isEqualNode(fresh)) {
+      target.replaceChild(fresh, current);
+      current = fresh;
+    }
+    anchor = current.nextSibling;
+  }
+  while (anchor) {
+    const next = anchor.nextSibling;
+    target.removeChild(anchor);
+    anchor = next;
+  }
+}
+
 function render(snap: Snapshot | null) {
-  const expanded = new Set(Array.from(networkContainer.querySelectorAll<HTMLDetailsElement>(".service-details[open]"))
-    .map(details => details.dataset.serviceId));
-  const focusedSummary = document.activeElement?.matches(".service-details > summary")
-    ? (document.activeElement.parentElement as HTMLDetailsElement).dataset.serviceId : undefined;
-  let nextFocus: HTMLElement | undefined;
+  const focused = document.activeElement;
+  const focusedRow = focused?.closest<HTMLElement>("article[data-render-key]");
   const fragment = document.createDocumentFragment();
   for (const network of networks) {
     const section = networkTemplate.content.cloneNode(true) as DocumentFragment;
-    element(section, ".network").dataset.network = network.id;
+    const networkElement = element(section, ".network");
+    networkElement.dataset.network = network.id;
+    networkElement.dataset.renderKey = network.id;
     element(section, "h2").textContent = t(network.label);
     const cards = element(section, ".cards");
     const services = snap?.services.filter((record) => record?.network === network.id) ?? [];
@@ -95,10 +139,7 @@ function render(snap: Snapshot | null) {
       : "";
     for (const service of services) {
       const card = makeCard(service);
-      const details = element<HTMLDetailsElement>(card, ".service-details");
-      details.dataset.serviceId = service.id;
-      details.open = expanded.has(service.id);
-      if (focusedSummary === service.id) nextFocus = element<HTMLElement>(details, "summary");
+      element(card, "article").dataset.renderKey = service.id;
       cards.append(card);
     }
     if (!services.length) {
@@ -109,8 +150,12 @@ function render(snap: Snapshot | null) {
     }
     fragment.append(section);
   }
-  networkContainer.replaceChildren(fragment);
-  nextFocus?.focus({ preventScroll: true });
+  patchChildren(networkContainer, fragment);
+  if (focusedRow && focused && (!focused.isConnected || focused.closest("[hidden]") || document.activeElement !== focused)) {
+    const fallback = focusedRow.isConnected ? focusedRow.querySelector<HTMLElement>(".service-details > summary") : networkContainer;
+    if (focused.isConnected && !focused.closest("[hidden]") && focused instanceof HTMLElement) focused.focus({ preventScroll: true });
+    else fallback?.focus({ preventScroll: true });
+  }
 }
 
 function makeCard(service: Service) {
@@ -123,12 +168,14 @@ function makeCard(service: Service) {
   heading.textContent = service.label
     ? service.kind === "http" ? service.label : t(service.label)
     : service.id || t("未命名服务");
+  heading.setAttribute("translate", "no");
   const serviceName = heading.textContent;
   if (typeof service.publicUrl === "string") {
     try {
       const target = new URL(service.publicUrl);
       if (["https:", "http:"].includes(target.protocol) && !target.username && !target.password) {
         const link = document.createElement("a");
+        link.className = "service-link";
         link.textContent = heading.textContent;
         link.href = target.href;
         link.target = "_blank";
@@ -139,8 +186,8 @@ function makeCard(service: Service) {
   }
   const repository = projectRepository(service);
   const github = element<HTMLAnchorElement>(card, ".github-link");
+  github.hidden = !repository;
   if (repository) {
-    github.hidden = false;
     github.href = repository;
     github.title = t("GitHub 仓库");
     github.setAttribute("aria-label", `${serviceName} · ${t("GitHub 仓库")}`);
@@ -222,7 +269,10 @@ function renderCharts(card: DocumentFragment, service: Service) {
     if (row.index) {
       const title = document.createElement("p");
       title.className = "index-title";
-      title.textContent = `${t(row.index.label)} (${row.index.name}) · ${t(row.index.state)}`;
+      const name = document.createElement("code");
+      name.setAttribute("translate", "no");
+      name.textContent = row.index.name;
+      title.append(`${t(row.index.label)} (`, name, `) · ${t(row.index.state)}`);
       strip.append(title);
     }
     const measurements = document.createElement("dl");
@@ -239,7 +289,7 @@ function renderCharts(card: DocumentFragment, service: Service) {
         const stamp = document.createElement("time");
         stamp.dateTime = observedAt;
         stamp.textContent = `${t("观测于")} ${timeFormat.format(Date.parse(observedAt))}`;
-        cell.append(stamp);
+        data.append(stamp);
       }
       measurements.append(cell);
     };
@@ -275,6 +325,39 @@ function renderUptime(card: DocumentFragment, service: Service) {
   element(card, ".service-uptime-value").textContent = formatted;
   const summary = element(element(card, ".service-details"), "summary");
   summary.setAttribute("aria-label", `${summary.getAttribute("aria-label")} · ${uptimeLabel} ${formatted}`);
+  const history = element(card, ".uptime-history");
+  const historyDetail = element(card, ".uptime-history-detail");
+  const bins = uptimeBins(service.availability);
+  const caption = element(historyDetail, ".uptime-history-caption");
+  const legend = element(historyDetail, ".uptime-history-key");
+  const breakdown = element(historyDetail, ".uptime-breakdown");
+  const ranges = element(breakdown, ".uptime-history-ranges");
+  element(breakdown, "summary").textContent = t("分时明细");
+  history.hidden = legend.hidden = breakdown.hidden = !bins;
+  caption.textContent = t(bins ? "每两小时的探测结果，从旧到新" : "暂无可用率时间线");
+  if (bins) {
+    const stateLabels = { up: "全部成功", down: "全部失败", mixed: "部分失败", empty: "暂无样本" } as const;
+    for (const [state, label] of Object.entries(stateLabels)) {
+      const item = document.createElement("li");
+      const swatch = document.createElement("span");
+      swatch.className = "uptime-swatch";
+      swatch.dataset.state = state;
+      swatch.setAttribute("aria-hidden", "true");
+      item.append(swatch, t(label));
+      legend.append(item);
+    }
+    for (const bin of bins) {
+      const cell = document.createElement("span");
+      cell.dataset.state = bin.state;
+      const range = binTimeFormat.formatRange(new Date(bin.startMinute * 60_000), new Date((bin.startMinute + 120) * 60_000));
+      const counts = bin.total ? ` · ${numberFormat.format(bin.available)}/${numberFormat.format(bin.total)} ${t("次")}` : "";
+      cell.title = `${range} UTC · ${t(stateLabels[bin.state])}${counts}`;
+      history.append(cell);
+      const item = document.createElement("li");
+      item.textContent = cell.title;
+      ranges.append(item);
+    }
+  }
   const uptimeRatio = element(card, ".uptime-ratio");
   const uptimeCount = element(card, ".uptime-count");
   const meter = element<HTMLMeterElement>(card, "meter");
@@ -290,7 +373,7 @@ function renderUptime(card: DocumentFragment, service: Service) {
 }
 
 function displayPercent(ratio: number): string {
-  return ratio < 1 && ratio >= 0.99995 ? "<100%" : percentFormat.format(ratio);
+  return ratio < 1 && ratio >= 0.99995 ? `<${percentFormat.format(1)}` : percentFormat.format(ratio);
 }
 
 function renderAvailability(card: DocumentFragment, availability: Availability) {
@@ -324,7 +407,7 @@ function renderAvailability(card: DocumentFragment, availability: Availability) 
   area.hidden = !list.hasChildNodes();
 }
 
-function updateFreshness() {
+function updateFreshness(manual = false) {
   const time = typeof snapshot?.updatedAt === "string" ? Date.parse(snapshot.updatedAt) : NaN;
   const known = Number.isFinite(time);
   const stale = known && Date.now() - time > Math.max(30, interval * 3) * 1000;
@@ -332,7 +415,14 @@ function updateFreshness() {
   const nextText = known
     ? `${failure || stale ? t("数据可能已过期") + " · " : ""}${t("更新于")} ${timeFormat.format(time)}`
     : t(failure ? "无法获取状态" : "等待首次采集");
-  if (freshness.dataset.status !== nextStatus) freshness.dataset.status = nextStatus;
+  const previousStatus = freshness.dataset.status;
+  if (previousStatus !== nextStatus) freshness.dataset.status = nextStatus;
+  // The visual timestamp changes for every poll; announcements are event-based.
+  // Fetch errors and history errors have their own adjacent status region.
+  if (!failure && manual) refreshAnnouncement.textContent = nextText;
+  else if (!failure && previousStatus !== nextStatus && previousStatus !== undefined && nextStatus !== "unknown") {
+    refreshAnnouncement.textContent = t(nextStatus === "stale" ? "数据可能已过期" : "状态已更新");
+  }
   if (freshnessText.textContent !== nextText) freshnessText.textContent = nextText;
   const historyError = typeof snapshot?.historyError === "string" ? t(snapshot.historyError) : "";
   notice.hidden = !failure && !historyError;
@@ -344,11 +434,11 @@ function updateFreshness() {
   }
 }
 
-async function loadStatus() {
+async function loadStatus(manual = false) {
   if (pending) return;
   window.clearTimeout(timer);
   pending = true;
-  refreshButton.disabled = true;
+  refreshButton.setAttribute("aria-disabled", "true");
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 10000);
   try {
@@ -367,13 +457,16 @@ async function loadStatus() {
   } finally {
     window.clearTimeout(timeout);
     pending = false;
-    refreshButton.disabled = false;
-    updateFreshness();
+    refreshButton.setAttribute("aria-disabled", "false");
+    updateFreshness(manual);
     timer = window.setTimeout(loadStatus, interval * 1000);
   }
 }
 
-refreshButton.addEventListener("click", loadStatus);
+refreshButton.addEventListener("click", () => {
+  if (!pending) refreshAnnouncement.textContent = "";
+  return loadStatus(true);
+});
 languageSelect.addEventListener("change", () => {
   selectedLanguage = preference(languageSelect.value);
   try { window.localStorage.setItem(languageKey, selectedLanguage); } catch { /* Continue without persistence. */ }
@@ -391,4 +484,4 @@ applyLanguage();
 render(null);
 updateFreshness();
 loadStatus();
-window.setInterval(updateFreshness, 5000);
+window.setInterval(() => updateFreshness(), 5000);

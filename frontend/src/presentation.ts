@@ -102,3 +102,22 @@ export function uptimeDay(availability: Service["availability"]) {
   if (sample && Number.isSafeInteger(sample.total) && Number.isSafeInteger(sample.available)
       && sample.total > 0 && sample.available >= 0 && sample.available <= sample.total) return sample;
 }
+
+/** Reject partial/invalid series rather than turning backend mistakes into downtime. */
+export function uptimeBins(availability: Service["availability"]) {
+  const bins = availability?.dayBins;
+  if (!Array.isArray(bins) || bins.length !== 12 || bins.some((bin, i) =>
+    !bin || !Number.isSafeInteger(bin.startMinute) || Math.abs(bin.startMinute) > 143_999_999_880 ||
+    (i > 0 && bin.startMinute - bins[i - 1].startMinute !== 120) ||
+    !Number.isSafeInteger(bin.available) || !Number.isSafeInteger(bin.total) ||
+    bin.available < 0 || bin.total < bin.available
+  )) return null;
+  return bins.map(bin => ({
+    ...bin,
+    state: stateOfBin(bin.available, bin.total),
+  }));
+}
+
+function stateOfBin(available: number, total: number): "empty" | "down" | "up" | "mixed" {
+  return total === 0 ? "empty" : available === 0 ? "down" : available === total ? "up" : "mixed";
+}
