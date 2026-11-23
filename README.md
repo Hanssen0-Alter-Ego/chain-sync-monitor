@@ -4,6 +4,8 @@ A small, self-hosted dashboard for CKB and Bitcoin nodes, Blockbook and RGB++ SP
 
 [中文](README.zh-CN.md)
 
+The dashboard follows the browser’s language preferences (English or Simplified Chinese, with English as the fallback).
+
 ## Run with Docker
 
 ```sh

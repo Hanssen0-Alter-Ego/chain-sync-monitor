@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>链同步监控</title>
+  <title>Chain Sync Monitor</title>
   <link rel="stylesheet" href="/style.css">
   <script src="/config.js"></script>
   <script type="module" src="/app.js"></script>
@@ -14,14 +14,14 @@
     <header class="page-header">
       <div>
         <p class="eyebrow">CHAIN SYNC MONITOR</p>
-        <h1>链同步监控</h1>
+        <h1>Chain Sync Monitor</h1>
       </div>
       <div class="toolbar">
-        <p class="freshness" id="freshness" aria-live="polite"><span class="dot"></span><span id="freshness-text">等待数据</span></p>
-        <button type="button" id="refresh">立即刷新</button>
+        <p class="freshness" id="freshness" aria-live="polite"><span class="dot"></span><span id="freshness-text">Waiting for data</span></p>
+        <button type="button" id="refresh">Refresh now</button>
       </div>
     </header>
-    <p class="subtitle">Bitcoin、CKB 及索引服务的同步状态</p>
+    <p class="subtitle">Sync status for Bitcoin, CKB, and indexing services</p>
     <p id="notice" class="notice" role="status" hidden></p>
     <div id="networks"></div>
     <template id="network-template">
@@ -44,12 +44,12 @@
           <span class="state"><span class="dot"></span><span class="state-label"></span></span>
         </header>
         <div class="progress-group" hidden>
-          <div class="progress-label"><span>同步进度</span><span class="progress-value"></span></div>
-          <progress max="1" aria-label="同步进度"></progress>
+          <div class="progress-label"><span class="progress-title">Sync progress</span><span class="progress-value"></span></div>
+          <progress max="1" aria-label="Sync progress"></progress>
         </div>
         <dl class="metrics"></dl>
         <div class="availability" hidden>
-          <p class="availability-title" title="按探测样本计算，与链同步进度无关">探测可用率</p>
+          <p class="availability-title" title="Based on probe samples, independent of chain sync progress">Probe availability</p>
           <dl class="availability-windows"></dl>
         </div>
         <p class="note" hidden></p>

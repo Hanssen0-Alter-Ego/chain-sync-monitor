@@ -7,6 +7,7 @@ import type { Snapshot } from "../../shared/status.js";
 const assets = [
   ["/", "index.html", "text/html"], ["/index.html", "index.html", "text/html"], ["/style.css", "style.css", "text/css"],
   ["/config.js", "config.js", "text/javascript"], ["/app.js", "app.js", "text/javascript"],
+  ["/i18n.js", "i18n.js", "text/javascript"],
 ];
 export function makeServer(config: Config, snapshot: () => Snapshot, staticDir?: string) {
   const files = new Map<string, [Buffer, string]>(staticDir

@@ -219,7 +219,10 @@ test("co-deploy keeps static frontend and read-only status", async (t) => {
   const base = await listen(t, makeServer(cfg, () => monitor.snapshot, "dist/web"));
   const html = await fetch(base);
   assert.equal(html.status, 200);
-  assert.match(await html.text(), /链同步监控/);
+  assert.ok((await html.text()).includes("<title>Chain Sync Monitor</title>"));
+  const localeModule = await fetch(base + "/i18n.js");
+  assert.equal(localeModule.status, 200);
+  assert.match(localeModule.headers.get("content-type"), /^text\/javascript/);
   const config = await fetch(base + "/config.js");
   assert.match(await config.text(), /"\/api\/status"/);
   const ticker = await fetch(base + "/app.js");

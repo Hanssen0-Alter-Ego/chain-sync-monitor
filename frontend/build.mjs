@@ -15,7 +15,9 @@ if (supplied) {
   connect += " " + url.origin;
 }
 mkdirSync(dist, { recursive: true });
-copyFileSync(new URL("../dist/client/frontend/src/app.js", folder), new URL("app.js", dist));
+for (const module of ["app.js", "i18n.js"]) {
+  copyFileSync(new URL("../dist/client/frontend/src/" + module, folder), new URL(module, dist));
+}
 for (const asset of ["index.html", "style.css"]) copyFileSync(new URL(asset, folder), new URL(asset, dist));
 writeFileSync(new URL("config.js", dist), "window.CHAIN_SYNC_MONITOR_API_URL = " + JSON.stringify(endpoint) + ";\n");
 writeFileSync(new URL("_headers", dist), [

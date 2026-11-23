@@ -2,6 +2,8 @@
 
 用 TypeScript 编写的链同步监控。前端是静态面板，后端用 Node.js 定时请求 JSON-RPC 或 HTTP，将 uptime 样本存进 SQLite。无需 Docker Socket、节点 CLI 或额外数据库。
 
+界面按浏览器的语言偏好显示简体中文或英文，不支持的语言回退到英文。
+
 ## 一起部署
 
 ```sh
