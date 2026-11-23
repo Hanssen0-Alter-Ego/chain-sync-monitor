@@ -1,3 +1,4 @@
+import { currentProbe, keySyncMetric, probeTotals, uptimeDay } from "./presentation.js";
 import { dashboardLanguage, translate } from "./i18n.js";
 import type { Availability, Service, Snapshot } from "../../shared/status.js";
 
@@ -26,7 +27,7 @@ const states = {
   syncing: "同步中",
   degraded: "异常",
   offline: "离线",
-  unknown: "未知",
+  unknown: "同步未核实",
 };
 const networkContainer = element(document, "#networks");
 const networkTemplate = element<HTMLTemplateElement>(document, "#network-template");
@@ -53,6 +54,11 @@ let failure = false;
 let timer: number | undefined;
 
 function render(snap: Snapshot | null) {
+  const expanded = new Set(Array.from(networkContainer.querySelectorAll<HTMLDetailsElement>(".service-details[open]"))
+    .map(details => details.dataset.serviceId));
+  const focusedSummary = document.activeElement?.matches(".service-details > summary")
+    ? (document.activeElement.parentElement as HTMLDetailsElement).dataset.serviceId : undefined;
+  let nextFocus: HTMLElement | undefined;
   const fragment = document.createDocumentFragment();
   for (const network of networks) {
     const section = networkTemplate.content.cloneNode(true) as DocumentFragment;
@@ -61,11 +67,18 @@ function render(snap: Snapshot | null) {
     element(section, "h2").textContent = t(network.label);
     const cards = element(section, ".cards");
     const services = snap?.services.filter((record) => record?.network === network.id) ?? [];
-    element(section, ".network-summary").textContent = services.length
-      ? `${services.filter(({ state }) => state === "synced" || state === "online").length} / ${services.length} ${t("正常")}`
+    const { online, unconfirmed, total } = probeTotals(services);
+    element(section, ".network-summary").textContent = total
+      ? `${numberFormat.format(online)} / ${numberFormat.format(total)} ${t("当前在线")}`
+        + (unconfirmed ? ` · ${numberFormat.format(unconfirmed)} ${t("未确认")}` : "")
       : "";
     for (const service of services) {
-      cards.append(makeCard(service));
+      const card = makeCard(service);
+      const details = element<HTMLDetailsElement>(card, ".service-details");
+      details.dataset.serviceId = service.id;
+      details.open = expanded.has(service.id);
+      if (focusedSummary === service.id) nextFocus = element<HTMLElement>(details, "summary");
+      cards.append(card);
     }
     if (!services.length) {
       const empty = document.createElement("p");
@@ -76,6 +89,7 @@ function render(snap: Snapshot | null) {
     fragment.append(section);
   }
   networkContainer.replaceChildren(fragment);
+  nextFocus?.focus({ preventScroll: true });
 }
 
 function makeCard(service: Service) {
@@ -100,18 +114,22 @@ function makeCard(service: Service) {
       }
     } catch { /* invalid links are not rendered */ }
   }
-  element(card, ".state").dataset.state = state;
-  element(card, ".state-label").textContent = t(states[state]);
-  if (typeof service.progress === "number" && Number.isFinite(service.progress)
-      && service.progress >= 0 && service.progress <= 1) {
-    element(card, ".progress-group").hidden = false;
-    const progress = element<HTMLProgressElement>(card, "progress");
-    progress.value = service.progress;
-    progress.setAttribute("aria-label", t("同步进度"));
-    element(card, ".progress-title").textContent = t("同步进度");
-    element(card, ".progress-value").textContent =
-      service.progress < 1 && service.progress >= 0.99995 ? "<100%" : percentFormat.format(service.progress);
-  }
+  const probe = currentProbe(service);
+  const probeState = element(card, ".probe-state");
+  probeState.dataset.state = probe === true ? "online" : probe === null ? "unknown" : state === "offline" ? "offline" : "failed";
+  const probeLabel = probe === true ? "在线" : probe === null ? "探测未确认" : state === "offline" ? "离线" : "不可用";
+  const probeText = t(probeLabel);
+  element(probeState, ".state-label").textContent = probeText;
+  probeState.title = t("连接状态");
+  const syncState = element(card, ".sync-state");
+  syncState.hidden = service.kind === "http" || state === "online" || state === "offline";
+  syncState.dataset.state = state;
+  element(syncState, ".state-label").textContent = t(states[state]);
+  syncState.title = t("同步状态");
+  const detailsLabel = element(element(card, ".service-details"), "summary");
+  detailsLabel.textContent = t("详情");
+  detailsLabel.setAttribute("aria-label", `${t("详情")}: ${service.label && service.kind !== "http" ? t(service.label) : service.label || service.id}`);
+  renderCharts(card, service);
   const metrics = element(card, ".metrics");
   for (const metric of Array.isArray(service.metrics) ? service.metrics : []) {
     if (!metric || typeof metric.label !== "string") continue;
@@ -141,6 +159,53 @@ function makeCard(service: Service) {
   return card;
 }
 
+function renderCharts(card: DocumentFragment, service: Service) {
+  const syncTrack = element(card, ".progress-group");
+  const syncTitle = element(card, ".progress-title");
+  const syncValue = element(card, ".progress-value");
+  const progress = element<HTMLProgressElement>(card, "progress");
+  progress.hidden = true;
+  if (service.kind !== "http") {
+    syncTrack.hidden = false;
+    syncTitle.textContent = t("同步进度");
+    if (typeof service.progress === "number" && Number.isFinite(service.progress)
+        && service.progress >= 0 && service.progress <= 1) {
+      progress.hidden = false;
+      progress.value = service.progress;
+      progress.setAttribute("aria-label", t("同步进度"));
+      const formatted = displayPercent(service.progress);
+      progress.setAttribute("aria-valuetext", formatted);
+      syncValue.textContent = formatted;
+    } else {
+      const key = keySyncMetric(service);
+      if (key) {
+        syncTitle.textContent = t(key.label);
+        syncValue.textContent = numberFormat.format(key.value) + (key.unit ? " " + t(key.unit) : "");
+      } else {
+        syncValue.textContent = t("暂无同步数据");
+      }
+    }
+  }
+  const uptime = uptimeDay(service.availability);
+  const uptimeLabel = t("24 小时可用率");
+  const uptimeRatio = element(card, ".uptime-ratio");
+  const uptimeCount = element(card, ".uptime-count");
+  const meter = element<HTMLMeterElement>(card, "meter");
+  meter.hidden = !uptime;
+  meter.setAttribute("aria-label", uptimeLabel);
+  element(card, ".uptime-title").textContent = uptimeLabel;
+  uptimeRatio.textContent = uptime ? displayPercent(uptime.available / uptime.total) : t("暂无样本");
+  if (uptime) {
+    meter.value = uptime.available / uptime.total;
+    uptimeCount.textContent = `(${numberFormat.format(uptime.available)}/${numberFormat.format(uptime.total)} ${t("次")})`;
+    meter.setAttribute("aria-valuetext", `${uptimeRatio.textContent} ${uptimeCount.textContent}`);
+  }
+}
+
+function displayPercent(ratio: number): string {
+  return ratio < 1 && ratio >= 0.99995 ? "<100%" : percentFormat.format(ratio);
+}
+
 function renderAvailability(card: DocumentFragment, availability: Availability) {
   if (!Array.isArray(availability?.windows)) return;
   const area = element(card, ".availability");
@@ -158,7 +223,7 @@ function renderAvailability(card: DocumentFragment, availability: Availability) 
     const ratio = sample.ratio;
     const hasRatio = typeof ratio === "number" && Number.isFinite(ratio) && ratio >= 0 && ratio <= 1;
     value.textContent = hasRatio
-      ? ratio < 1 && ratio >= 0.99995 ? "<100%" : percentFormat.format(ratio)
+      ? displayPercent(ratio)
       : t("暂无样本");
     if (Number.isInteger(sample.available) && Number.isInteger(sample.total) && sample.total > 0) {
       const count = document.createElement("span");

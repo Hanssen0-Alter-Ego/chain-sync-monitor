@@ -22,6 +22,7 @@ export interface Service extends Reading {
   network: Network;
   kind: Kind;
   publicUrl?: string;
+  probeAvailable?: boolean | null;
   availability: Availability;
 }
 export interface Snapshot {

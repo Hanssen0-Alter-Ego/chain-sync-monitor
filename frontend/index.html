@@ -41,18 +41,33 @@
             <p class="kind"></p>
             <h3></h3>
           </div>
-          <span class="state"><span class="dot"></span><span class="state-label"></span></span>
+          <div class="service-states">
+            <span class="state probe-state"><span class="dot" aria-hidden="true"></span><span class="state-label"></span></span>
+            <span class="state sync-state"><span class="dot" aria-hidden="true"></span><span class="state-label"></span></span>
+          </div>
         </header>
-        <div class="progress-group" hidden>
-          <div class="progress-label"><span class="progress-title">Sync progress</span><span class="progress-value"></span></div>
-          <progress max="1" aria-label="Sync progress"></progress>
+        <div class="service-charts">
+          <div class="progress-group" hidden>
+            <div class="progress-label"><span class="progress-title">Sync progress</span><span class="progress-value"></span></div>
+            <progress max="1" aria-label="Sync progress" hidden></progress>
+          </div>
+          <div class="uptime-group">
+            <div class="progress-label">
+              <span class="uptime-title">24-hour uptime</span>
+              <span><span class="uptime-ratio"></span> <span class="uptime-count"></span></span>
+            </div>
+            <meter min="0" max="1" aria-label="24-hour uptime" hidden></meter>
+          </div>
         </div>
-        <dl class="metrics"></dl>
-        <div class="availability" hidden>
-          <p class="availability-title" title="Based on probe samples, independent of chain sync progress">Probe availability</p>
-          <dl class="availability-windows"></dl>
-        </div>
-        <p class="note" hidden></p>
+        <details class="service-details">
+          <summary>Details</summary>
+          <dl class="metrics"></dl>
+          <div class="availability" hidden>
+            <p class="availability-title" title="Based on probe samples, independent of chain sync progress">Probe availability</p>
+            <dl class="availability-windows"></dl>
+          </div>
+          <p class="note" hidden></p>
+        </details>
       </article>
     </template>
   </main>

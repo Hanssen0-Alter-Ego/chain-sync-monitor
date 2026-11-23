@@ -15,7 +15,7 @@ if (supplied) {
   connect += " " + url.origin;
 }
 mkdirSync(dist, { recursive: true });
-for (const module of ["app.js", "i18n.js"]) {
+for (const module of ["app.js", "i18n.js", "presentation.js"]) {
   copyFileSync(new URL("../dist/client/frontend/src/" + module, folder), new URL(module, dist));
 }
 for (const asset of ["index.html", "style.css"]) copyFileSync(new URL(asset, folder), new URL(asset, dist));

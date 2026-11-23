@@ -8,6 +8,7 @@ const assets = [
   ["/", "index.html", "text/html"], ["/index.html", "index.html", "text/html"], ["/style.css", "style.css", "text/css"],
   ["/config.js", "config.js", "text/javascript"], ["/app.js", "app.js", "text/javascript"],
   ["/i18n.js", "i18n.js", "text/javascript"],
+  ["/presentation.js", "presentation.js", "text/javascript"],
 ];
 function allowsOrigin(config: Config, origin: string): boolean {
   if (config.corsOrigins.has(origin)) return true;

@@ -115,7 +115,9 @@ url = "${target}/private-asset/healthcheck"
   const monitor = new Monitor(cfg, new HistoryStore(cfg.historyPath));
   const base = await listen(t, makeServer(cfg, () => monitor.snapshot));
   assert.equal((await fetch(base + "/")).status, 404);
-  assert.equal((await (await fetch(base + "/api/status")).json()).updatedAt, null);
+  const pending = await (await fetch(base + "/api/status")).json();
+  assert.equal(pending.updatedAt, null);
+  assert.ok(pending.services.every(service => service.probeAvailable === null));
   assert.deepEqual(requests, []);
   await monitor.poll();
   const amount = requests.length;
@@ -132,6 +134,7 @@ url = "${target}/private-asset/healthcheck"
   const get = id => snapshot.services.find(service => service.id === id);
   assert.equal(snapshot.services.length, 9);
   assert.ok(snapshot.updatedAt);
+  assert.ok(snapshot.services.every(service => service.probeAvailable === true));
   assert.equal(get("mainnet-spv").state, "synced");
   assert.equal(get("mainnet-spv").metrics.find(m => m.label === "链上 SPV 高度").value, 100);
   assert.equal(get("mainnet-btc").state, "synced");
@@ -178,6 +181,33 @@ test("status remains live if history database is not writable", async (t) => {
   assert.ok(monitor.snapshot.updatedAt);
   assert.ok(monitor.snapshot.historyError);
   assert.equal(monitor.snapshot.services.length, 0);
+});
+test("the latest probe result is independent of synchronization and historical samples", async (t) => {
+  let failing = false;
+  const upstream = await listen(t, createServer(async (req, res) => {
+    if (req.url === "/proof") return json(res, badRequest);
+    res.writeHead(failing ? 503 : 200).end();
+  }));
+  const path = join(directory(t), "config.toml");
+  writeFileSync(path, `
+[networks.mainnet.spv]
+url = "${upstream}/proof"
+[[networks.mainnet.http]]
+id = "health"
+label = "Health"
+url = "${upstream}/healthcheck"
+`);
+  const cfg = loadConfig(path);
+  const monitor = new Monitor(cfg, new HistoryStore(cfg.historyPath));
+  await monitor.poll();
+  failing = true;
+  await monitor.poll();
+  const base = await listen(t, makeServer(cfg, () => monitor.snapshot));
+  const { services } = await (await fetch(base + "/api/status")).json();
+  assert.equal(services[0].state, "unknown");
+  assert.equal(services[0].probeAvailable, true);
+  assert.equal(services[1].probeAvailable, false);
+  assert.deepEqual(services[1].availability.windows.map(window => [window.available, window.total]), [[1, 2], [1, 2]]);
 });
 test("never forwards authorization via redirects, and bounds response time/body", async (t) => {
   let arrived = false;
@@ -267,6 +297,7 @@ test("co-deploy keeps static frontend and read-only status", async (t) => {
   assert.equal(html.status, 200);
   assert.ok((await html.text()).includes("<title>Chain Sync Monitor</title>"));
   const localeModule = await fetch(base + "/i18n.js");
+  assert.equal((await fetch(base + "/presentation.js")).status, 200);
   assert.equal(localeModule.status, 200);
   assert.match(localeModule.headers.get("content-type"), /^text\/javascript/);
   const config = await fetch(base + "/config.js");

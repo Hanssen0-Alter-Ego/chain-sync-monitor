@@ -29,12 +29,13 @@ export class Monitor {
     this.record(new Map());
     this.snapshot = this.build(null, []);
   }
-  private build(updatedAt: string | null, readings: Reading[]): Snapshot {
+  private build(updatedAt: string | null, readings: Reading[], current: boolean[] = []): Snapshot {
     return {
       updatedAt, intervalSeconds: this.config.intervalSeconds, historyError: this.error,
       services: this.probes.map(({ network, id, endpoint }, index) => ({
         id, network, kind: endpoint.kind, label: endpoint.label, publicUrl: endpoint.publicUrl,
         ...(readings[index] ?? reading("unknown", [], "等待首次检查。")),
+        probeAvailable: current[index] ?? null,
         availability: this.history[id] ?? availability(),
       })),
     };
@@ -72,7 +73,7 @@ export class Monitor {
       return result.reading;
     }));
     this.record(new Map(results.map((result, index) => [this.probes[index].id, result.available])));
-    this.snapshot = this.build(new Date().toISOString(), readings);
+    this.snapshot = this.build(new Date().toISOString(), readings, results.map(result => result.available));
   }
   start() {
     if (this.initialPoll) return;
