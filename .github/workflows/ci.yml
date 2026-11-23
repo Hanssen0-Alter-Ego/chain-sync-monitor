@@ -44,13 +44,13 @@ jobs:
           chmod 0755 "$config_dir"
           printf '[monitor]\ncors_origins = ["https://status.example.com"]\n' > "$config_dir/config.toml"
           chmod 0644 "$config_dir/config.toml"
-          trap 'docker rm -f monitor-smoke >/dev/null 2>&1 || true; rm -rf "$config_dir"' EXIT
+          trap 'docker logs monitor-smoke 2>&1 || true; docker rm -f monitor-smoke >/dev/null 2>&1 || true; rm -rf "$config_dir"' EXIT
           for api_only in 0 1; do
             docker run --rm -d --name monitor-smoke --read-only \
               -e MONITOR_API_ONLY="$api_only" -p 127.0.0.1:8080:8080 \
               --mount "type=bind,src=$config_dir,dst=/config,readonly" \
               chain-sync-monitor:smoke
-            curl --fail --retry 10 --retry-connrefused --retry-delay 1 -sS \
+            curl --fail --retry 10 --retry-all-errors --retry-delay 1 --max-time 2 -sS \
               -H 'Origin: https://status.example.com' -D "$config_dir/headers" \
               -o "$config_dir/status.json" http://127.0.0.1:8080/api/status
             grep -qi '^access-control-allow-origin: https://status.example.com' "$config_dir/headers"
