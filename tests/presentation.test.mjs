@@ -258,7 +258,15 @@ test("built dashboard renders two dimensions and preserves the expanded row afte
     assert.equal(history.children[11].children.length, 0);
     assert.match(card(2).querySelector(".uptime-history-detail").querySelector(".uptime-history-caption").textContent, /Two-hour probe results, oldest to newest/);
     const historyDetail = card(2).querySelector(".uptime-history-detail");
-    assert.equal(historyDetail.querySelector(".uptime-history-key").children.length, 4);
+    assert.match(history.children[9].title, /No samples$/);
+    assert.match(history.children[11].title, /All checks failed · 0% \(0\/1 checks\)/);
+    const keyItems = historyDetail.querySelector(".uptime-history-key").children;
+    assert.equal(keyItems.length, 4);
+    for (const state of ["down", "empty"]) {
+      const swatch = keyItems.map(item => item.children[0]).find(item => item.dataset.state === state);
+      assert.ok(swatch);
+      assert.equal(swatch.children.length, 0);
+    }
     assert.equal(historyDetail.querySelector(".uptime-breakdown").querySelector(".uptime-history-ranges").children[10].textContent, history.children[10].title);
     assert.equal(card(3).querySelector(".uptime-history").hidden, true);
     assert.equal(card(3).querySelector(".uptime-history-detail").querySelector(".uptime-history-caption").textContent, "Uptime timeline unavailable");
@@ -374,4 +382,19 @@ test("built dashboard renders two dimensions and preserves the expanded row afte
       else delete globalThis[key];
     }
   }
+});
+
+test("the timeline and legend use hollow solid outlines for failure and dotted outlines for no samples", () => {
+  const css = readFileSync(new URL("../dist/web/style.css", import.meta.url), "utf8");
+  const styles = state => [...css.matchAll(new RegExp(
+    String.raw`:is\(\.uptime-history > span, \.uptime-swatch\)\[data-state="${state}"\]\s*\{([^}]+)\}`, "g"
+  ))].map(match => match[1].trim().replace(/\s+/g, " "));
+  assert.deepEqual(styles("down"), [
+    "background: transparent; border: 1px solid var(--error);",
+    "background: Canvas; border-color: CanvasText;",
+  ]);
+  assert.deepEqual(styles("empty"), [
+    "background: transparent; border: 1px dotted var(--muted);",
+    "background: Canvas; border-color: CanvasText;",
+  ]);
 });

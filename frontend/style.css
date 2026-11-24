@@ -163,7 +163,7 @@ h3 { margin: 0; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
   background: transparent;
   border: 1px dotted var(--muted);
 }
-:is(.uptime-history > span, .uptime-swatch)[data-state="down"] { background: var(--error); }
+:is(.uptime-history > span, .uptime-swatch)[data-state="down"] { background: transparent; border: 1px solid var(--error); }
 :is(.uptime-history, .uptime-swatch) svg { display: block; inline-size: 100%; block-size: 100%; }
 [data-tone="good"] rect { fill: var(--good); }
 [data-tone="caution"] rect { fill: var(--caution); }
@@ -244,7 +244,7 @@ dd { margin: 0; font: 600 12px/1.4 var(--mono); text-align: right; overflow-wrap
 @media (forced-colors: active) {
   :is(.uptime-history > span, .uptime-swatch) { forced-color-adjust: none; background: GrayText; }
   :is(.uptime-history > span, .uptime-swatch)[data-state="empty"] { background: Canvas; border-color: CanvasText; }
-  :is(.uptime-history > span, .uptime-swatch)[data-state="down"] { background: Canvas; border: 1px solid CanvasText; }
+  :is(.uptime-history > span, .uptime-swatch)[data-state="down"] { background: Canvas; border-color: CanvasText; }
   :is(.uptime-history, .uptime-swatch) rect { fill: CanvasText; }
 }
 
