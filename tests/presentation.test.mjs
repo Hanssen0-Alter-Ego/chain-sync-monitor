@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
-import { currentProbe, probeTotals, projectRepository, syncComparisons, uptimeDay } from "../dist/web/presentation.js";
+import { currentProbe, probeTotals, projectRepository, syncComparisons, uptimeBins, uptimeDay } from "../dist/web/presentation.js";
 
 test("a mixed network shows four of five online without conflating sync and reachability", () => {
   const services = [
@@ -30,6 +30,20 @@ test("the uptime chart uses counted probes and rejects missing or impossible sam
   assert.equal(uptimeDay({windows: [window(2, 1)]}), undefined);
   assert.equal(uptimeDay({windows: [{ ...window(4, 5), seconds: 604_800 }]}), undefined);
   assert.deepEqual(uptimeDay({windows: [window(0, 2)]}), window(0, 2));
+});
+
+test("uptime bins keep exact proportions while the color deadband limits one missed probe", () => {
+  const samples = [[480,480], [479,480], [98,100], [97,100], [90,100], [45,100], [0,70], [0,0]];
+  const dayBins = Array.from({length:12}, (_, i) => {
+    const [available, total] = samples[i] ?? [0,0];
+    return {startMinute: i * 120, available, total};
+  });
+  const bins = uptimeBins({dayBins, windows:[]});
+  assert.deepEqual(bins.slice(0,8).map(({ratio, tone, state})=>[ratio,tone,state]), [
+    [1,"good","up"], [479/480,"good","mixed"], [.98,"good","mixed"], [.97,"caution","mixed"],
+    [.9,"caution","mixed"], [.45,"poor","mixed"], [0,"poor","down"], [null,"empty","empty"],
+  ]);
+  assert.equal(uptimeBins({dayBins: dayBins.slice(1), windows:[]}), null);
 });
 
 test("comparisons use real observations and show bars even near the tip", () => {
@@ -170,6 +184,7 @@ test("built dashboard renders two dimensions and preserves the expanded row afte
   document.documentElement = {};
   document.createDocumentFragment = () => new Element();
   document.createElement = tag => Object.assign(new Element(), {tagName:tag});
+  document.createElementNS = (_ns, tag) => document.createElement(tag);
   document.querySelector("#network-template").content = new Element();
   document.querySelector("#service-template").content = new Element();
   const services = [
@@ -183,7 +198,8 @@ test("built dashboard renders two dimensions and preserves the expanded row afte
     progress: kind === "ckbadger" ? 0 : undefined,
     availability: {windows: [{seconds: 86_400, ratio: 0.75, available: kind === "spv" ? 0 : kind === "btc" ? 0 : 3, total: kind === "spv" ? 0 : 4}],
       dayBins: kind === "blockbook" ? Array.from({length: 12}, (_, i) => ({
-        startMinute: 30_000_000 + i * 120, available: i === 8 || i === 10 ? 1 : 0, total: i === 10 ? 2 : i === 8 || i === 11 ? 1 : 0,
+        startMinute: 30_000_000 + i * 120, available: i === 7 ? 479 : i === 8 || i === 10 ? 1 : 0,
+        total: i === 7 ? 480 : i === 10 ? 2 : i === 8 || i === 11 ? 1 : 0,
       })) : undefined},
   }));
   services.push(
@@ -232,7 +248,14 @@ test("built dashboard renders two dimensions and preserves the expanded row afte
     const history = card(2).querySelector(".uptime-history");
     assert.equal(history.hidden, false);
     assert.deepEqual(history.children.slice(8).map(cell => cell.dataset.state), ["up", "empty", "mixed", "down"]);
-    assert.match(history.children[10].title, /Some checks failed.*1\/2 checks/);
+    assert.match(history.children[7].title, /Some checks failed · 99\.79% \(479\/480 checks\)/);
+    assert.equal(history.children[7].dataset.tone, "good");
+    assert.equal(history.children[7].children[0].children[0].attrs.height, String(479/480));
+    assert.equal(history.children[9].children.length, 0);
+    assert.match(history.children[10].title, /Some checks failed · 50% \(1\/2 checks\)/);
+    assert.equal(history.children[10].children[0].children[0].attrs.y, "0.5");
+    assert.equal(history.children[10].children[0].children[0].attrs.height, "0.5");
+    assert.equal(history.children[11].children.length, 0);
     assert.match(card(2).querySelector(".uptime-history-detail").querySelector(".uptime-history-caption").textContent, /Two-hour probe results, oldest to newest/);
     const historyDetail = card(2).querySelector(".uptime-history-detail");
     assert.equal(historyDetail.querySelector(".uptime-history-key").children.length, 4);
@@ -284,7 +307,8 @@ test("built dashboard renders two dimensions and preserves the expanded row afte
     assert.equal(breakdown.open, true);
     assert.equal(document.activeElement, breakdownSummary);
     assert.equal(breakdown.querySelector(".uptime-history-ranges").children[10], oldRange);
-    assert.match(oldRange.textContent, /All checks succeeded.*2\/2 checks/);
+    assert.match(oldRange.textContent, /All checks succeeded · 100% \(2\/2 checks\)/);
+    assert.equal(history.children[10].children[0].children[0].attrs.height, "1");
     const savedBins = services[2].availability.dayBins;
     delete services[2].availability.dayBins;
     await timers.filter(timer => timer.delay === 30_000).at(-1).fn();

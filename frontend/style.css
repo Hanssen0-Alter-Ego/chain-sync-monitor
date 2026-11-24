@@ -152,10 +152,22 @@ h3 { margin: 0; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
   block-size: 11px;
   align-items: center;
 }
-.uptime-history > span, .uptime-swatch { block-size: 9px; min-inline-size: 0; border: 1px dotted currentColor; color: var(--muted); }
-:is(.uptime-history > span, .uptime-swatch)[data-state="up"] { background: var(--good); border: 0; }
-:is(.uptime-history > span, .uptime-swatch)[data-state="mixed"] { border: 1px solid var(--caution); border-block-start: 4px solid var(--caution); }
-:is(.uptime-history > span, .uptime-swatch)[data-state="down"] { block-size: 3px; align-self: end; background: var(--error); border: 0; }
+.uptime-history > span, .uptime-swatch {
+  display: block;
+  block-size: 9px;
+  min-inline-size: 0;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--error) 30%, var(--panel));
+}
+:is(.uptime-history > span, .uptime-swatch)[data-state="empty"] {
+  background: transparent;
+  border: 1px dotted var(--muted);
+}
+:is(.uptime-history > span, .uptime-swatch)[data-state="down"] { background: var(--error); }
+:is(.uptime-history, .uptime-swatch) svg { display: block; inline-size: 100%; block-size: 100%; }
+[data-tone="good"] rect { fill: var(--good); }
+[data-tone="caution"] rect { fill: var(--caution); }
+[data-tone="poor"] rect { fill: var(--error); }
 .uptime-history-detail { color: var(--muted); font-size: 11px; margin: 5px 0; }
 .service-uptime-value { font-variant-numeric: tabular-nums; }
 .state[data-state="synced"], .state[data-state="online"] { color: var(--good); }
@@ -230,8 +242,10 @@ dd { margin: 0; font: 600 12px/1.4 var(--mono); text-align: right; overflow-wrap
 }
 
 @media (forced-colors: active) {
-  :is(.uptime-history > span, .uptime-swatch)[data-state="up"] { background: CanvasText; forced-color-adjust: none; }
-  :is(.uptime-history > span, .uptime-swatch)[data-state="down"] { border-block-end: 3px solid CanvasText; }
+  :is(.uptime-history > span, .uptime-swatch) { forced-color-adjust: none; background: GrayText; }
+  :is(.uptime-history > span, .uptime-swatch)[data-state="empty"] { background: Canvas; border-color: CanvasText; }
+  :is(.uptime-history > span, .uptime-swatch)[data-state="down"] { background: Canvas; border: 1px solid CanvasText; }
+  :is(.uptime-history, .uptime-swatch) rect { fill: CanvasText; }
 }
 
 

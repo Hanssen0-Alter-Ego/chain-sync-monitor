@@ -32,7 +32,7 @@ docker compose up -d --build
 - CKBadger：双网部署分别用 `/api/mainnet/v1/statistics/network` 与 `/api/testnet/v1/statistics/network`；单网独立部署用 `/api/v1/statistics/network`。
 - BTC Asset API 等 HTTP 服务：按 2xx 判断可用，不跟随重定向，不显示链同步进度。
 
-24 小时、7 天可用率按实际探测样本计算；同步中不等于不可用，监控停机也不算节点停机。升级时可保留原 TOML 与 Compose 的 `monitor-history` 卷（SQLite 格式不变），不要让旧、新两个监控进程同时写同一个库。
+24 小时、7 天可用率按实际探测样本计算；同步中不等于不可用，监控停机也不算节点停机。24 小时小条从左到右每格两小时，等宽等高；自下而上按探测成功率填充。成功率至少 98% 为绿色，90% 至不足 98% 为琥珀色，不足 90% 为粉色。全失败显示粉色底块，未采样显示虚框，不计为节点停机。可展开分时明细核对探测次数。升级时可保留原 TOML 与 Compose 的 `monitor-history` 卷（SQLite 格式不变），不要让旧、新两个监控进程同时写同一个库。
 
 本地用 Node.js 24，执行 `npm ci && npm test`。PR 跑测试并构建 Docker；`main` 测试通过会发布 GHCR 镜像。
 

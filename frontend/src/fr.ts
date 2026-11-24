@@ -43,7 +43,7 @@ export default {
   "全部成功": "Toutes les vérifications ont réussi",
   "全部失败": "Toutes les vérifications ont échoué",
   "部分失败": "Certaines vérifications ont échoué",
-  "每两小时的探测结果，从旧到新": "Résultats par tranche de deux heures, du plus ancien au plus récent",
+  "每两小时的探测结果，从旧到新；填充高度表示成功比例": "Résultats par tranche de deux heures, du plus ancien au plus récent. La hauteur remplie indique la part des contrôles réussis.",
   "跳至服务状态": "Aller à l’état des services",
   "暂无可用率时间线": "Historique de disponibilité indisponible",
   "分时明细": "Détail par intervalle",

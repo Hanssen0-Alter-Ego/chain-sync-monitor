@@ -112,10 +112,17 @@ export function uptimeBins(availability: Service["availability"]) {
     !Number.isSafeInteger(bin.available) || !Number.isSafeInteger(bin.total) ||
     bin.available < 0 || bin.total < bin.available
   )) return null;
-  return bins.map(bin => ({
-    ...bin,
-    state: stateOfBin(bin.available, bin.total),
-  }));
+  return bins.map(bin => {
+    const ratio = bin.total ? bin.available / bin.total : null;
+    return {
+      ...bin,
+      ratio,
+      state: stateOfBin(bin.available, bin.total),
+      // This is a visual deadband only: a missed probe still reduces the
+      // actual fill and is included in all counts and percentages.
+      tone: ratio === null ? "empty" : ratio >= .98 ? "good" : ratio >= .9 ? "caution" : "poor",
+    };
+  });
 }
 
 function stateOfBin(available: number, total: number): "empty" | "down" | "up" | "mixed" {
