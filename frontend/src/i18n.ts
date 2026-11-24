@@ -121,6 +121,8 @@ export const en = {
   "SPV 落后": "SPV lag",
   "HTTP 状态": "HTTP status",
   "响应时间": "Response time",
+  "DOB 协议版本": "DOB protocol versions",
+  "DOB Decoder 未返回有效的协议版本。": "DOB Decoder did not return valid protocol versions.",
   "证明 RPC": "Proof RPC",
   "REST 高度未更新": "REST height unchanged for",
   "等待首次检查。": "Waiting for the first check.",

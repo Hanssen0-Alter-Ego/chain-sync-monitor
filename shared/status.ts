@@ -1,6 +1,6 @@
 export const networks = ["mainnet", "testnet3"] as const;
 export type Network = typeof networks[number];
-export type Kind = "btc" | "ckb" | "blockbook" | "spv" | "ckbadger" | "http";
+export type Kind = "btc" | "ckb" | "blockbook" | "spv" | "ckbadger" | "dob_decoder" | "http";
 export type State = "online" | "synced" | "syncing" | "degraded" | "offline" | "unknown";
 export interface Metric {
   label: string;

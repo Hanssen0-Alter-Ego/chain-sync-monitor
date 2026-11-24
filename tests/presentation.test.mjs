@@ -502,6 +502,37 @@ test("built dashboard prioritizes both networks and preserves expanded rows acro
     await refresh.handlers.get("click")();
     assert.ok(ids("attention").includes(explorer.id), "true bulk sync stays visible even at one block");
 
+    checkedAt += 30_000;
+    select("en");
+    const decoder = {
+      id: "testnet3-dob_decoder", kind: "dob_decoder", network: "testnet3",
+      label: "DOB Decoder", state: "online", probeAvailable: true,
+      metrics: [{ label: "DOB 协议版本", value: "dob/0, dob/1" }],
+      availability: { windows: [{ seconds: 86_400, ratio: 1, available: 4, total: 4 }] },
+    };
+    services.push(decoder);
+    serviceIds.push(decoder.id);
+    await refresh.handlers.get("click")();
+    const decoderCard = card(serviceIds.indexOf(decoder.id));
+    const versions = decoderCard.querySelector(".dob-measurements");
+    assert.ok(ids("testnet3").includes(decoder.id));
+    assert.equal(versions.hidden, false);
+    assert.equal(versions.querySelector("dt").textContent, "DOB protocol versions");
+    assert.equal(versions.querySelector("dd").textContent, "dob/0, dob/1");
+    assert.equal(decoderCard.querySelector(".sync-state").hidden, true);
+    assert.equal(strips(serviceIds.indexOf(decoder.id)).length, 0);
+    assert.match(decoderCard.querySelector(".uptime-ratio").textContent, /100/);
+    assert.equal(decoderCard.querySelector(".github-link").href, "https://github.com/sporeprotocol/dob-decoder-standalone-server");
+
+    checkedAt += 30_000;
+    decoder.state = "degraded";
+    decoder.probeAvailable = false;
+    decoder.metrics = [];
+    await refresh.handlers.get("click")();
+    assert.ok(ids("attention").includes(decoder.id));
+    assert.equal(decoderCard.querySelector(".sync-state").hidden, true);
+    assert.equal(decoderCard.querySelector(".dob-measurements").querySelector("dd").textContent, "No data");
+
   } finally {
     for (const [key, descriptor] of Object.entries(original)) {
       if (descriptor) Object.defineProperty(globalThis, key, descriptor);

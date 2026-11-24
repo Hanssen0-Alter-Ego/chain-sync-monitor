@@ -1,4 +1,4 @@
-import { createAttentionTracker, currentProbe, probeTotals, projectRepository, servicePriority, syncComparisons, uptimeBins, uptimeDay, uptimeFillColor } from "./presentation.js";
+import { createAttentionTracker, currentProbe, isAvailabilityOnly, probeTotals, projectRepository, servicePriority, syncComparisons, uptimeBins, uptimeDay, uptimeFillColor } from "./presentation.js";
 import { dashboardLanguage, translate, type DashboardLanguage } from "./i18n.js";
 import type { Availability, Service, Snapshot } from "../../shared/status.js";
 
@@ -33,7 +33,7 @@ const networks = [
   { id: "mainnet", label: "主网" },
   { id: "testnet3", label: "测试网" },
 ];
-const kinds = { btc: "BITCOIN", ckb: "CKB", blockbook: "INDEXER", spv: "SPV", ckbadger: "INDEXER", http: "HTTP" };
+const kinds = { btc: "BITCOIN", ckb: "CKB", blockbook: "INDEXER", spv: "SPV", ckbadger: "INDEXER", dob_decoder: "DOB", http: "HTTP" };
 const states = {
   synced: "已同步",
   online: "在线",
@@ -227,7 +227,7 @@ function makeCard(service: Service, networkLabel?: string) {
   element(probeState, ".state-label").textContent = probeText;
   probeState.title = t("连接状态");
   const syncState = element(card, ".sync-state");
-  syncState.hidden = service.kind === "http" || state === "online" || state === "offline";
+  syncState.hidden = isAvailabilityOnly(service.kind) || state === "online" || state === "offline";
   syncState.dataset.state = state;
   element(syncState, ".state-label").textContent = t(states[state]);
   syncState.title = t("同步状态");
@@ -280,6 +280,15 @@ function renderCharts(card: DocumentFragment, service: Service) {
       ? numberFormat.format(status) : t("暂无响应");
     element(http, ".http-latency").textContent = typeof latency === "number" && Number.isFinite(latency) && latency >= 0
       ? `${numberFormat.format(latency)} ms` : t("无数据");
+    return;
+  }
+  if (service.kind === "dob_decoder") {
+    const rpc = element(card, ".dob-measurements");
+    const versions = (Array.isArray(service.metrics) ? service.metrics : [])
+      .find(metric => metric?.label === "DOB 协议版本")?.value;
+    rpc.hidden = false;
+    element(rpc, "dt").textContent = t("DOB 协议版本");
+    element(rpc, "dd").textContent = typeof versions === "string" && versions ? versions : t("无数据");
     return;
   }
   const rows = syncComparisons(service);

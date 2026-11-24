@@ -30,6 +30,7 @@ docker compose up -d --build
 - Blockbook：索引高度和同步标记，跟配置的 BTC Core 对比；支持分别配置主网和 Testnet3。
 - SPV：支持 `getSyncStatus` 的服务会显示缓存的 BTC 高度、本地头高度和最近确认的链上客户端高度，附可用的观测时间。缓存不等于独立验证同步。可选填完整实例 `type_script` 通过 CKB Indexer 核验链上高度；配置的 Bitcoin Core 高度优先。旧版证明 RPC 仍可用。
 - CKBadger：双网部署分别用 `/api/mainnet/v1/statistics/network` 与 `/api/testnet/v1/statistics/network`；单网独立部署用 `/api/v1/statistics/network`。
+- DOB Decoder：通过 JSON-RPC POST 调用无参数的 `dob_protocol_version`，显示协议版本并记录可用率；不解码资产，也不检查链同步。主网与测试网 URL 示例见 [config.example.toml](config.example.toml)。
 - BTC Asset API 等 HTTP 服务：按 2xx 判断可用，不跟随重定向，不显示链同步进度。
 
 24 小时、7 天可用率按实际探测样本计算；同步中不等于不可用，监控停机也不算节点停机。24 小时小条从左到右每格两小时，等宽等高；自下而上按探测成功率填充。填充颜色随成功率下降从绿经琥珀色连续过渡到粉色，没有切换阈值。全失败（0%）显示粉色实线空框，未采样显示灰色点线空框，不计为节点停机。可展开分时明细核对探测次数。升级时可保留原 TOML 与 Compose 的 `monitor-history` 卷（SQLite 格式不变），不要让旧、新两个监控进程同时写同一个库。

@@ -39,6 +39,54 @@ async function payload(request) {
 const reply = (result) => ({ jsonrpc: "2.0", id: 1, result });
 const badRequest = { id: 1, jsonrpc: "2.0", error: { code: -32602 } };
 
+test("DOB Decoder uses its version RPC and records valid replies as availability, not sync", async (t) => {
+  const dir = directory(t);
+  const seen = [];
+  const target = await listen(t, createServer(async (req, res) => {
+    assert.equal(req.method, "POST");
+    assert.equal(req.headers["content-type"], "application/json");
+    assert.deepEqual(await payload(req), replyRequest);
+    seen.push(req.url);
+    if (req.url === "/valid") return json(res, reply(["dob/0", "dob/1", "dob/15"]));
+    if (req.url === "/wrong-id") return json(res, { ...reply(["dob/0"]), id: 2 });
+    if (req.url === "/wrong-version") return json(res, { ...reply(["dob/0"]), jsonrpc: "1.0" });
+    if (req.url === "/failure") return json(res, { ...reply(["dob/0"]), error: { code: -32601 } });
+    if (req.url === "/empty") return json(res, reply([]));
+    if (req.url === "/mixed") return json(res, reply(["dob/0", "http"]));
+    if (req.url === "/object") return json(res, reply({ versions: ["dob/0"] }));
+    if (req.url === "/null") return json(res, reply(null));
+    if (req.url === "/upstream-status") return json(res, reply(["dob/0"]), 503);
+    return res.writeHead(200, { "Content-Type": "text/html" }).end("<p>Healthy</p>");
+  }));
+  const replyRequest = { jsonrpc: "2.0", method: "dob_protocol_version", params: [], id: 1 };
+  const path = join(dir, "monitor.toml");
+  writeFileSync(path, `[networks.mainnet.dob_decoder]
+url = "${target}/valid"
+[networks.testnet3.dob_decoder]
+url = "${target}/empty"
+`);
+  const cfg = loadConfig(path);
+  const db = new HistoryStore(cfg.historyPath);
+  const monitor = new Monitor(cfg, db);
+  await monitor.poll();
+  assert.deepEqual([...seen].sort(), ["/empty", "/valid"]);
+  const [main, testnet] = monitor.snapshot.services;
+  assert.equal(main.id, "mainnet-dob_decoder");
+  assert.equal(main.state, "online");
+  assert.equal(main.probeAvailable, true);
+  assert.equal(main.metrics[0].value, "dob/0, dob/1, dob/15");
+  assert.equal(main.progress, undefined);
+  assert.equal(main.availability.windows[0].available, 1);
+  assert.equal(testnet.id, "testnet3-dob_decoder");
+  assert.equal(testnet.probeAvailable, false);
+  assert.equal(testnet.availability.windows[0].available, 0);
+  for (const url of ["/wrong-id", "/wrong-version", "/failure", "/empty", "/mixed", "/object", "/null", "/upstream-status", "/not-json"]) {
+    const failed = await probe("mainnet", { ...cfg.endpoints.mainnet.get("dob_decoder"), url: target + url }, 1);
+    assert.equal(failed.available, false, url);
+    assert.notEqual(failed.reading.state, "online", url);
+  }
+});
+
 test("separate frontend status API, all probes, CORS and no implicit RPC/config disclosure", async (t) => {
   const dir = directory(t);
   const requests = [];

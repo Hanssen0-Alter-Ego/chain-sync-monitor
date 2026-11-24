@@ -39,3 +39,13 @@ test("localizes legacy status payloads without changing custom labels", () => {
     assert.equal(translate(locale, "自定义服务"), "自定义服务");
   }
 });
+
+test("localizes the DOB Decoder metric and diagnostics without translating protocol identifiers", () => {
+  const label = "DOB 协议版本";
+  const note = "DOB Decoder 未返回有效的协议版本。";
+  for (const locale of ["en", "zh-Hant", "ja", "fr", "de"]) {
+    assert.notEqual(translate(locale, label), label);
+    assert.notEqual(translate(locale, note), note);
+    assert.equal(translate(locale, "dob/0, dob/1"), "dob/0, dob/1");
+  }
+});

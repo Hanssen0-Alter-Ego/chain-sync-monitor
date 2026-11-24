@@ -60,3 +60,11 @@ url = "http://127.0.0.1:8889"
 # label = "BTC Asset API"
 # github_url = "https://github.com/RGBPlusPlus/btc-assets-api"
 # url = "http://127.0.0.1:3000/healthcheck"
+
+# DOB Decoder uptime and advertised versions (JSON-RPC; not chain sync).
+# Uncomment whichever instances you want to monitor.
+# [networks.mainnet.dob_decoder]
+# url = "https://dob-decoder.ckbccc.com"
+#
+# [networks.testnet3.dob_decoder]
+# url = "https://dob-decoder-test.ckbccc.com"

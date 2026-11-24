@@ -97,6 +97,8 @@ export default {
   "SPV 落后": "Retard SPV",
   "HTTP 状态": "État HTTP",
   "响应时间": "Temps de réponse",
+  "DOB 协议版本": "Versions du protocole DOB",
+  "DOB Decoder 未返回有效的协议版本。": "DOB Decoder n’a pas renvoyé de versions de protocole valides.",
   "证明 RPC": "RPC des preuves",
   "REST 高度未更新": "Hauteur REST inchangée depuis",
   "等待首次检查。": "En attente de la première vérification.",

@@ -30,7 +30,7 @@ Use a dedicated Bitcoin Core RPC user with `rpcauth` and `rpcwhitelist=monitor:g
 ```text
 Browser → Netlify (static UI)
 Browser → https://status-api.example.com/api/status (cached public snapshot)
-Monitor backend → private/TLS CKB, Bitcoin Core, Blockbook, SPV, CKBadger, and HTTP endpoints
+Monitor backend → private/TLS CKB, Bitcoin Core, Blockbook, SPV, CKBadger, DOB Decoder, and HTTP endpoints
 ```
 
 1. On the backend machine, configure each service’s `url` using an address reachable **from the monitor container**. For a different host, use a private/VPN address or an authenticated encrypted tunnel; don't publish node RPCs to the internet. Bitcoin RPC Basic auth is not encryption. Netlify and browsers never need a route to the nodes.
@@ -54,6 +54,8 @@ Copy the block from [Caddyfile.example](Caddyfile.example) into your host's Cadd
 - **SPV:** Where `getSyncStatus` is supported, the monitor shows cached Bitcoin tip, local header tip, and last confirmed on-chain client, with observation times if available. Cached reports do not independently verify sync. Optionally configure the full instance **type script** (`code_hash`, `hash_type`, `args`), not its hash, to verify the on-chain client through the CKB indexer. Configured Bitcoin Core heights take precedence. Older proof endpoints continue to work.
 
 - **CKBadger:** query `/api/mainnet/v1/statistics/network` and `/api/testnet/v1/statistics/network` for a shared frontend, or `/api/v1/statistics/network` for a standalone instance, to get indexed/target heights and deep-fork status. Startup `503 initializing` shows as syncing but does not count as available until the endpoint returns usable data.
+
+- **DOB Decoder:** configure `[networks.mainnet.dob_decoder]` and/or `[networks.testnet3.dob_decoder]`. The monitor checks the endpoint via JSON-RPC POST `dob_protocol_version` (no arguments), shows its advertised protocol versions and includes successful replies in uptime. It does not decode an asset or check chain sync. See [config.example.toml](config.example.toml) for both network URLs.
 
 Generic HTTP checks use a configured GET URL and count 2xx as available without following redirects. BTC Asset API's `/healthcheck` measures dependency and worker health, not sync progress or SPV proof validity. Mainnet Blockbook is optional and configured the same way as testnet3.
 

@@ -315,6 +315,14 @@ export async function probe(network: Network, endpoint: Endpoint, timeout: numbe
         }
         return { reading: ckbadger(data), available: true };
       }
+      case "dob_decoder": {
+        const versions = await rpc(endpoint, timeout, "dob_protocol_version");
+        if (!Array.isArray(versions) || !versions.length || versions.length > 32
+            || !versions.every(version => typeof version === "string" && /^dob\/[0-9]{1,9}$/.test(version))) {
+          throw new ProbeError("DOB Decoder 未返回有效的协议版本。");
+        }
+        return { reading: reading("online", [metric("DOB 协议版本", [...new Set(versions)].join(", "))]), available: true };
+      }
       case "http": {
         const {status, ms} = await statusOnly(endpoint.url, timeout);
         const available = status >= 200 && status < 300;

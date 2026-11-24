@@ -5,7 +5,7 @@ import { networks, type Network, type Kind } from "../../shared/status.js";
 
 export const labels: Record<Exclude<Kind, "http">, string> = {
   btc: "Bitcoin Core", ckb: "CKB 节点与索引器", blockbook: "Blockbook",
-  spv: "Bitcoin SPV 服务", ckbadger: "CKBadger",
+  spv: "Bitcoin SPV 服务", ckbadger: "CKBadger", dob_decoder: "DOB Decoder",
 };
 
 export interface Endpoint {

@@ -1,4 +1,4 @@
-import type { Service, Snapshot } from "../../shared/status.js";
+import type { Kind, Service, Snapshot } from "../../shared/status.js";
 
 // An older backend cannot report an exact current result. Only use its
 // unambiguous states, never the aggregate availability of prior polls.
@@ -11,12 +11,15 @@ export function currentProbe(service: Service): boolean | null {
   return null;
 }
 
-// The connection probe and synchronization are independent. HTTP-only
+// The connection probe and synchronization are independent. Availability-only
 // services are ready once reachable; a Bitcoin node can still be indexing.
+export function isAvailabilityOnly(kind: Kind) {
+  return kind === "http" || kind === "dob_decoder";
+}
 export function servicePriority(service: Service): 0 | 1 | 2 {
   const probe = currentProbe(service);
   if (probe === false || service.state === "offline") return 0;
-  if (probe !== true || (service.state !== "synced" && !(service.kind === "http" && service.state === "online"))) return 1;
+  if (probe !== true || (service.state !== "synced" && !(isAvailabilityOnly(service.kind) && service.state === "online"))) return 1;
   if (service.kind === "btc" && (service.bitcoinIndexes?.txindex?.state === "syncing"
       || service.bitcoinIndexes?.txospenderindex?.state === "syncing")) return 1;
   return 2;
@@ -44,7 +47,7 @@ export function createAttentionTracker() {
       const mode = service.kind === "ckbadger" && Array.isArray(service.metrics) && service.metrics.find(row => row?.label === "索引模式")?.value;
       const legacyGap = mode === "normal" || mode === "synced" ? syncComparisons(service)[0]?.lag : undefined;
       const lag = service.syncTipLag ?? legacyGap;
-      const credible = fresh && service.kind !== "http" && currentProbe(service) === true
+      const credible = fresh && !isAvailabilityOnly(service.kind) && currentProbe(service) === true
         && (service.state === "syncing" || service.state === "synced")
         && typeof lag === "number" && Number.isSafeInteger(lag) && lag >= 0;
       const nearTip = credible && lag <= tipTolerance && (raw === 2 || lag > 0);
@@ -77,6 +80,7 @@ const githubProjects = {
   blockbook: "https://github.com/trezor/blockbook",
   spv: "https://github.com/RGBPlusPlus/ckb-bitcoin-spv-service",
   ckbadger: "https://github.com/janx/ckbadger",
+  dob_decoder: "https://github.com/sporeprotocol/dob-decoder-standalone-server",
 };
 export function projectRepository(service: Service): string | undefined {
   if (Object.hasOwn(githubProjects, service.kind)) return githubProjects[service.kind as keyof typeof githubProjects];
