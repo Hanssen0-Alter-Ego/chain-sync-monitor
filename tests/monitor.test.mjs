@@ -264,6 +264,54 @@ url = "${upstream}/healthcheck"
   assert.equal(services[1].probeAvailable, false);
   assert.deepEqual(services[1].availability.windows.map(window => [window.available, window.total]), [[1, 2], [1, 2]]);
 });
+test("poll certifies near-tip lag without concealing initial sync or unrelated component lag", async (t) => {
+  let initial = false, mempool = true, indexHeight = 98;
+  const upstream = await listen(t, createServer(async (req, res) => {
+    if (req.url.includes("/book")) return json(res, {backend:{chain:"main"}, blockbook:{
+      bestHeight:99, inSync:false, inSyncMempool:mempool, initialSync:initial,
+    }});
+    if (req.url.includes("/explorer")) return json(res, {syncStatus:{
+      syncedBlock:99, tipBlock:100, syncMode:initial ? "bulk" : "normal", isSyncing:true,
+    }});
+    const {method} = await payload(req);
+    if (method === "getblockchaininfo") return json(res, reply({chain:"main",blocks:100,headers:100,initialblockdownload:initial}));
+    if (method === "getindexinfo") return json(res, reply({txindex:{synced:false,best_block_height:indexHeight}}));
+    if (method === "sync_state") return json(res, reply({tip_number:"0x63",best_known_block_number:"0x64",ibd:initial}));
+    if (method === "get_indexer_tip") return json(res, reply({block_number:"0x62"}));
+    return res.writeHead(404).end();
+  }));
+  const path = join(directory(t), "config.toml");
+  writeFileSync(path, ["btc","ckb","blockbook","ckbadger"].map((kind,index) =>
+    `[networks.mainnet.${kind}]
+url="${upstream}/${["btc","ckb","book","explorer"][index]}"
+`).join(""));
+  const settings = loadConfig(path);
+  const monitor = new Monitor(settings,new HistoryStore(settings.historyPath));
+  const snapshot = async () => {
+    await monitor.poll();
+    return Object.fromEntries(monitor.snapshot.services.map(r => [r.kind,r]));
+  };
+  let data = await snapshot();
+  assert.equal(data.btc.syncTipLag, 2);
+  assert.equal(data.btc.bitcoinIndexes.txindex.state, "syncing");
+  assert.equal(data.ckb.syncTipLag, 2, "compare indexer with known tip across both CKB legs");
+  assert.equal(data.blockbook.syncTipLag, 1);
+  assert.equal(data.ckbadger.syncTipLag, 1);
+  assert.equal(data.ckb.state, "syncing");
+  assert.equal(data.blockbook.state, "syncing");
+  initial = true;
+  data = await snapshot();
+  for (const kind of ["btc","ckb","blockbook","ckbadger"]) {
+    assert.equal(data[kind].syncTipLag, undefined, kind + " initial sync");
+  }
+  initial = false;
+  mempool = false;
+  indexHeight = 90;
+  data = await snapshot();
+  assert.equal(data.blockbook.syncTipLag, undefined, "mempool outage is not a single-block lag");
+  assert.equal(data.btc.syncTipLag, 10, "node tip at zero cannot hide its slower index");
+});
+
 test("SPV cache, direct Core tip and optional CKB verification keep distinct observations", async (t) => {
   const at = 1_700_000_000;
   let cache = {bitcoinTip:{height:110,observedAt:at},localHeaderTip:{height:105,observedAt:null},confirmedClient:{startHeight:50,endHeight:90,observedAt:at}};
@@ -289,6 +337,7 @@ test("SPV cache, direct Core tip and optional CKB verification keep distinct obs
   let metrics=new Map(service.metrics.map(m=>[m.label,m]));
   assert.equal(service.probeAvailable,true);
   assert.equal(service.state,"unknown");
+  assert.equal(service.syncTipLag,undefined,"cache-only SPV is not certified");
   assert.equal(metrics.get("SPV 观测的 BTC 高度").value,110);
   assert.equal(metrics.get("本地 SPV 高度").value,105);
   assert.equal(metrics.get("SPV 缓存的链上高度").observedAt,new Date(at*1000).toISOString());
@@ -304,6 +353,7 @@ url="${upstream}/btc"
 `);
   metrics=new Map(service.metrics.map(m=>[m.label,m.value]));
   assert.equal(metrics.get("链上 SPV 高度"),95);
+  assert.equal(service.syncTipLag,25,"live SPV compared with synced BTC");
   assert.equal(metrics.get("本地 BTC 高度"),120);
   assert.equal(metrics.has("SPV 缓存的链上高度"),false);
   cache={bitcoinTip:null,localHeaderTip:null,confirmedClient:null};

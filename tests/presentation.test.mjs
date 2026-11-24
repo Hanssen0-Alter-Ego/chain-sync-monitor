@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
-import { currentProbe, probeTotals, projectRepository, servicePriority, syncComparisons, uptimeBins, uptimeDay, uptimeFillColor } from "../dist/web/presentation.js";
+import { createAttentionTracker, currentProbe, probeTotals, projectRepository, servicePriority, syncComparisons, uptimeBins, uptimeDay, uptimeFillColor } from "../dist/web/presentation.js";
 
 test("a mixed network shows four of five online without conflating sync and reachability", () => {
   const services = [
@@ -36,6 +36,33 @@ test("service priority keeps failed probes ahead of incomplete sync and ready se
   const btc = {kind:"btc", state:"synced", probeAvailable:true};
   assert.equal(servicePriority({...btc, bitcoinIndexes:{txindex:{state:"syncing"}}}), 1);
   assert.equal(servicePriority({...btc, bitcoinIndexes:{txindex:{state:"disabled"}}}), 2);
+});
+
+test("only credible near-tip gaps are tolerated and duplicates never count as probes", () => {
+  const watch = createAttentionTracker();
+  const service = {id:"mainnet-ckbadger", kind:"ckbadger", state:"syncing", probeAvailable:true};
+  const snapshot = (second, reading) => ({ updatedAt: `2026-11-24T00:00:${String(second).padStart(2,"0")}Z`,
+    services: [{ ...service, ...reading }] });
+  const priority = (second, reading) => watch(snapshot(second, reading)).get(service.id).priority;
+  const legacy = (lag, mode = "normal") => ({metrics: [
+    {label:"索引模式",value:mode}, {label:"落后",value:lag},
+    {label:"索引高度",value:100 - lag}, {label:"CKB 目标高度",value:100},
+  ]});
+  assert.equal(priority(1, legacy(3)), 1, "starting behind is not debounced");
+  assert.equal(priority(2, legacy(2)), 2);
+  assert.equal(priority(3, legacy(3)), 2);
+  assert.equal(priority(3, legacy(3)), 2, "the same upstream observation cannot advance the debounce");
+  assert.equal(priority(4, legacy(3)), 1);
+  assert.equal(priority(5, legacy(2)), 2, "recovery is immediate");
+  assert.equal(priority(6, legacy(5)), 1, "material lag is immediate");
+  assert.equal(priority(7, legacy(2)), 2);
+  assert.equal(priority(8, {...legacy(2),probeAvailable:false}), 0);
+  assert.equal(priority(9, {...legacy(1),state:"unknown"}), 1);
+  assert.equal(priority(10, {...legacy(1),state:"degraded"}), 1);
+  assert.equal(priority(11, legacy(1,"bulk")), 1);
+  assert.equal(priority(12, {kind:"btc",syncTipLag:1}), 2);
+  assert.equal(priority(13, {kind:"btc",syncTipLag:0,bitcoinIndexes:{txindex:{state:"syncing",height:100}}}), 1);
+  assert.equal(priority(14, {kind:"ckb",metrics:legacy(1).metrics}), 1, "do not guess legacy CKB IBD");
 });
 
 test("the uptime chart uses counted probes and rejects missing or impossible samples", () => {
@@ -440,6 +467,41 @@ test("built dashboard prioritizes both networks and preserves expanded rows acro
     assert.deepEqual(ids("mainnet"), serviceIds.slice(0, 5));
     assert.deepEqual(ids("testnet3"), serviceIds.slice(5));
     assert.equal(card(2), beforeAllReady);
+    // Use the real refresh + render path: repeated HTTP fetches and locale
+    // re-renders of one snapshot cannot advance the classification.
+    const explorer = services.find(service => service.kind === "ckbadger");
+    let checkedAt = Date.now() + 60_000;
+    globalThis.fetch = async () => new Response(JSON.stringify({
+      updatedAt: new Date(checkedAt).toISOString(), intervalSeconds: 30, services,
+    }));
+    const setGap = (gap, mode = "normal") => {
+      explorer.state = "syncing";
+      explorer.metrics = [{label:"索引高度",value:100-gap},{label:"CKB 目标高度",value:100},
+        {label:"落后",value:gap},{label:"索引模式",value:mode}];
+    };
+    setGap(1);
+    await refresh.handlers.get("click")();
+    assert.ok(ids("mainnet").includes(explorer.id));
+    assert.equal(card(serviceIds.indexOf(explorer.id)).querySelector(".sync-state").querySelector(".state-label").textContent, "Syncing");
+    assert.match(strips(serviceIds.indexOf(explorer.id))[0].children[0].children[2].children[1].textContent, /1/);
+    checkedAt += 30_000;
+    setGap(3);
+    await refresh.handlers.get("click")();
+    select("zh-CN");
+    await refresh.handlers.get("click")();
+    assert.ok(ids("mainnet").includes(explorer.id), "same upstream sample must remain held after re-render");
+    checkedAt += 30_000;
+    await refresh.handlers.get("click")();
+    assert.ok(ids("attention").includes(explorer.id));
+    checkedAt += 30_000;
+    setGap(2);
+    await refresh.handlers.get("click")();
+    assert.ok(ids("mainnet").includes(explorer.id), "recovery must move the card back immediately");
+    checkedAt += 30_000;
+    setGap(1,"bulk");
+    await refresh.handlers.get("click")();
+    assert.ok(ids("attention").includes(explorer.id), "true bulk sync stays visible even at one block");
+
   } finally {
     for (const [key, descriptor] of Object.entries(original)) {
       if (descriptor) Object.defineProperty(globalThis, key, descriptor);

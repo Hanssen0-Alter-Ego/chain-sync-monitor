@@ -1,4 +1,4 @@
-import { currentProbe, probeTotals, projectRepository, servicePriority, syncComparisons, uptimeBins, uptimeDay, uptimeFillColor } from "./presentation.js";
+import { createAttentionTracker, currentProbe, probeTotals, projectRepository, servicePriority, syncComparisons, uptimeBins, uptimeDay, uptimeFillColor } from "./presentation.js";
 import { dashboardLanguage, translate, type DashboardLanguage } from "./i18n.js";
 import type { Availability, Service, Snapshot } from "../../shared/status.js";
 
@@ -74,6 +74,7 @@ function applyLanguage() {
 }
 
 let snapshot: Snapshot | null = null;
+const trackAttention = createAttentionTracker();
 let interval = 30;
 let pending = false;
 let failure = false;
@@ -131,8 +132,10 @@ function render(snap: Snapshot | null) {
   const previousCards = new Map(Array.from(networkContainer.querySelectorAll<HTMLElement>("article[data-render-key]"),
     card => [card.dataset.renderKey!, card]));
   const knownServices = (snap?.services ?? []).filter(service => networks.some(network => network.id === service?.network));
-  const attention = knownServices.filter(service => servicePriority(service) < 2)
-    .sort((a, b) => servicePriority(a) - servicePriority(b));
+  const priorityById = trackAttention(snap);
+  const priorityOf = (service: Service) => priorityById.get(service.id)?.priority ?? servicePriority(service);
+  const attention = knownServices.filter(service => priorityOf(service) < 2)
+    .sort((a, b) => priorityOf(a) - priorityOf(b));
 
   function sectionFor(id: string, label: string) {
     const section = networkTemplate.content.cloneNode(true) as DocumentFragment;
@@ -154,7 +157,7 @@ function render(snap: Snapshot | null) {
   for (const network of networks) {
     const { section, cards } = sectionFor(network.id, network.label);
     const services = knownServices.filter(service => service.network === network.id);
-    const ready = services.filter(service => servicePriority(service) === 2);
+    const ready = services.filter(service => priorityOf(service) === 2);
     const { online, unconfirmed, total } = probeTotals(services);
     element(section, ".network-summary").textContent = total
       ? `${numberFormat.format(online)} / ${numberFormat.format(total)} ${t("当前在线")}`

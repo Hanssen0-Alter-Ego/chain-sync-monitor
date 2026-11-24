@@ -1,4 +1,4 @@
-import type { Service } from "../../shared/status.js";
+import type { Service, Snapshot } from "../../shared/status.js";
 
 // An older backend cannot report an exact current result. Only use its
 // unambiguous states, never the aggregate availability of prior polls.
@@ -20,6 +20,45 @@ export function servicePriority(service: Service): 0 | 1 | 2 {
   if (service.kind === "btc" && (service.bitcoinIndexes?.txindex?.state === "syncing"
       || service.bitcoinIndexes?.txospenderindex?.state === "syncing")) return 1;
   return 2;
+}
+
+const tipTolerance = 2;
+const debounceBand = 4;
+
+/** Dashboard grouping only. Return raw status/metrics unchanged outside this classifier. */
+export function createAttentionTracker() {
+  let latest = NaN;
+  let prior = new Map<string, { priority: 0 | 1 | 2; nearTip: boolean }>();
+
+  return (snapshot: Snapshot | null) => {
+    const observed = typeof snapshot?.updatedAt === "string" ? Date.parse(snapshot.updatedAt) : NaN;
+    if (Number.isFinite(observed) && observed === latest) return prior;
+    const regressed = observed < latest;
+    const fresh = Number.isFinite(observed) && !regressed;
+    const next = new Map<string, { priority: 0 | 1 | 2; nearTip: boolean }>();
+    for (const service of snapshot?.services ?? []) {
+      if (!service || typeof service.id !== "string") continue;
+      const raw = servicePriority(service);
+      // Older CKBadger probes already expose enough evidence; do not guess
+      // IBD/mempool/confirmation state for other services on older backends.
+      const mode = service.kind === "ckbadger" && Array.isArray(service.metrics) && service.metrics.find(row => row?.label === "索引模式")?.value;
+      const legacyGap = mode === "normal" || mode === "synced" ? syncComparisons(service)[0]?.lag : undefined;
+      const lag = service.syncTipLag ?? legacyGap;
+      const credible = fresh && service.kind !== "http" && currentProbe(service) === true
+        && (service.state === "syncing" || service.state === "synced")
+        && typeof lag === "number" && Number.isSafeInteger(lag) && lag >= 0;
+      const nearTip = credible && lag <= tipTolerance && (raw === 2 || lag > 0);
+      const previous = prior.get(service.id);
+      // After a healthy near-tip observation, wait for one additional fresh
+      // sample in the marginal band. A duplicate fetch/re-render is no sample.
+      const pending = credible && raw === 1 && lag > tipTolerance && lag <= debounceBand
+        && previous?.priority === 2 && previous.nearTip;
+      next.set(service.id, { priority: nearTip || pending ? 2 : raw, nearTip });
+    }
+    latest = observed;
+    prior = next;
+    return next;
+  };
 }
 
 export function probeTotals(services: Service[]) {

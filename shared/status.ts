@@ -20,6 +20,8 @@ export interface Reading {
   note?: string;
   progress?: number;
   bitcoinIndexes?: BitcoinIndexes;
+  /** Verified gap on a live, non-initial sync path. Absent when not established. */
+  syncTipLag?: number;
 }
 export interface AvailabilityBin { startMinute: number; available: number; total: number }
 export interface Availability {

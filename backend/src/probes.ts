@@ -67,11 +67,16 @@ async function bitcoin(network: Network, endpoint: Endpoint, timeout: number): P
   const stamp = new Date((nat(info.time) ?? 0) * 1000);
   if (stamp.getTime()) rows.push(metric("最新区块时间", stamp.toISOString()));
   const synced = !ibd && headers === height;
+  const bitcoinIndexes = await readBitcoinIndexes(endpoint, timeout - (performance.now() - start) / 1000);
+  const indexLags = Object.values(bitcoinIndexes).flatMap(index => index.state === "syncing" ? [headers - index.height] : []);
+  const syncTipLag = !ibd && !Object.values(bitcoinIndexes).some(index =>
+    index.state === "unavailable" || index.state === "syncing" && index.height > height)
+    ? Math.max(headers - height, ...indexLags) : undefined;
   return {
     reading: {
       ...reading(synced ? "synced" : "syncing", rows,
         "按本节点所见的区块头判断，不代表已核对外部网络高度。", fraction(info.verificationprogress)),
-      bitcoinIndexes: await readBitcoinIndexes(endpoint, timeout - (performance.now() - start) / 1000),
+      bitcoinIndexes, syncTipLag,
     },
     available: true, tip: { height, headers, hash, synced },
   };
@@ -128,7 +133,9 @@ async function ckb(endpoint: Endpoint, timeout: number): Promise<Observation> {
   }
   if (!i) return { reading: reading("syncing", rows, "索引器还没有返回区块高度。"), available: true };
   const syncing = s && (s.ibd || (best !== undefined && s.height < best) || i.height < s.height);
-  return { reading: reading(syncing ? "syncing" : "synced", rows), available: true };
+  const syncTipLag = s && !s.ibd && best !== undefined && best >= s.height && s.height >= i.height
+    ? best - i.height : undefined;
+  return { reading: { ...reading(syncing ? "syncing" : "synced", rows), syncTipLag }, available: true };
 }
 async function blockbook(network: Network, endpoint: Endpoint, timeout: number): Promise<BaseProbe> {
   const base = endpoint.url.replace(/\/+$/, "");
@@ -142,7 +149,9 @@ export function compareBlockbook(network: Network, book: Record<string, unknown>
   tip?: BitcoinTip): { result: Reading; height?: number } {
   const height = nat(book.bestHeight), chainSync = book.inSync, mempoolSync = book.inSyncMempool;
   const rows = height === undefined ? [] : [metric("索引高度", height)];
-  const done = (state: State, note: string, progress?: number) => ({ result: reading(state, rows, note, progress), height });
+  const done = (state: State, note: string, progress?: number, syncTipLag?: number) => ({
+    result: { ...reading(state, rows, note, progress), syncTipLag }, height,
+  });
   if (typeof chainSync === "boolean") rows.push(metric("链同步", chainSync ? "是" : "否"));
   if (typeof mempoolSync === "boolean") rows.push(metric("内存池同步", mempoolSync ? "是" : "否"));
   if (typeof backend.chain === "string" && !btcChains[network].includes(backend.chain)) {
@@ -164,13 +173,15 @@ export function compareBlockbook(network: Network, book: Record<string, unknown>
   } else if (reportedTip !== undefined) {
     rows.push(metric("Blockbook 上游高度", reportedTip));
   }
+  const verifiedGap = book.initialSync === false && mempoolSync && tip?.synced && height !== undefined && height <= tip.height
+    && (chainSync || height < tip.height) ? tip.height - height : undefined;
   if (book.initialSync === true || !chainSync || !mempoolSync || (tip && height !== undefined && height < tip.height)) {
     return done("syncing", "以 Blockbook REST 报告为准；全量索引时高度可能不会持续刷新。",
-      height !== undefined && tip?.headers ? Math.min(1, height / tip.headers) : undefined);
+      height !== undefined && tip?.headers ? Math.min(1, height / tip.headers) : undefined, verifiedGap);
   }
   if (height === undefined || !tip?.synced) return done("unknown", "Blockbook 自报已同步，尚无同步的 Bitcoin Core 高度可核对。");
   if (height > tip.height) return done("degraded", "Blockbook 索引高度高于配置的 Core，请核对两者的后端。");
-  return done("synced", "同步标记正常，索引高度与配置的 Core 一致。");
+  return done("synced", "同步标记正常，索引高度与配置的 Core 一致。", undefined, verifiedGap);
 }
 function ckbadger(payload: unknown) {
   const data = record(payload), sync = record(data?.syncStatus);
@@ -183,8 +194,11 @@ function ckbadger(payload: unknown) {
   rows.push(metric("落后", lag, "块"));
   const mode = sync.syncMode;
   if (mode === "bulk" || mode === "normal" || mode === "synced") rows.push(metric("索引模式", mode));
-  return reading(sync.isSyncing === true || lag ? "syncing" : sync.isSyncing === false && target > 0 ? "synced" : "unknown",
-    rows, undefined, target ? height / target : undefined);
+  return {
+    ...reading(sync.isSyncing === true || lag ? "syncing" : sync.isSyncing === false && target > 0 ? "synced" : "unknown",
+      rows, undefined, target ? height / target : undefined),
+    syncTipLag: (mode === "normal" || mode === "synced") && typeof sync.isSyncing === "boolean" && target > 0 ? lag : undefined,
+  };
 }
 type ObservedHeight = { height: number; observedAt?: string };
 interface SpvStatus {
@@ -278,8 +292,11 @@ export async function inspectOnchain(scriptValue: unknown, ckb: Endpoint | undef
     if (!btc || btc.height < tip) return reading("unknown", metrics, note ? note + " 暂无可比对的 BTC 高度。" : "暂无可比对的 BTC 高度。");
     const lag = btc.height - tip;
     metrics.push(metric("本地 BTC 高度", btc.height), metric("SPV 落后", lag, "块"));
-    return reading(lag ? "syncing" : btc.synced ? "synced" : "unknown", metrics, note,
-      btc.height > first ? (tip - first) / (btc.height - first) : undefined);
+    return {
+      ...reading(lag ? "syncing" : btc.synced ? "synced" : "unknown", metrics, note,
+        btc.height > first ? (tip - first) / (btc.height - first) : undefined),
+      syncTipLag: btc.synced ? lag : undefined,
+    };
   } catch (error) {
     return { ...live, state: "degraded", note: "RPC 在线；链上检查未成功。" + (error instanceof ProbeError ? error.note : "") };
   }
