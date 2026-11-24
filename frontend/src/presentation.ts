@@ -118,13 +118,31 @@ export function uptimeBins(availability: Service["availability"]) {
       ...bin,
       ratio,
       state: stateOfBin(bin.available, bin.total),
-      // This is a visual deadband only: a missed probe still reduces the
-      // actual fill and is included in all counts and percentages.
-      tone: ratio === null ? "empty" : ratio >= .98 ? "good" : ratio >= .9 ? "caution" : "poor",
     };
   });
 }
 
 function stateOfBin(available: number, total: number): "empty" | "down" | "up" | "mixed" {
   return total === 0 ? "empty" : available === 0 ? "down" : available === total ? "up" : "mixed";
+}
+
+// Dashboard green, amber and pink, expressed in linear-light sRGB for mixing.
+// The midpoint is an illustrative color, not a status or failure threshold.
+const uptimePalette = ([0xf5a9b8, 0xe9c484, 0x8ddeaa]).map(rgb =>
+  [16, 8, 0].map(shift => {
+    const channel = ((rgb >> shift) & 255) / 255;
+    return channel <= .04045 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4;
+  })
+);
+
+export function uptimeFillColor(ratio: number): string {
+  const position = ratio * 2;
+  const segment = position < 1 ? 0 : 1;
+  const weight = position - segment;
+  const channels = uptimePalette[segment].map((start, i) => {
+    const linear = start + (uptimePalette[segment + 1][i] - start) * weight;
+    const display = linear <= .0031308 ? linear * 12.92 : 1.055 * linear ** (1 / 2.4) - .055;
+    return Math.round(display * 255).toString(16).padStart(2, "0");
+  });
+  return `#${channels.join("")}`;
 }

@@ -1,4 +1,4 @@
-import { currentProbe, probeTotals, projectRepository, syncComparisons, uptimeBins, uptimeDay } from "./presentation.js";
+import { currentProbe, probeTotals, projectRepository, syncComparisons, uptimeBins, uptimeDay, uptimeFillColor } from "./presentation.js";
 import { dashboardLanguage, translate, type DashboardLanguage } from "./i18n.js";
 import type { Availability, Service, Snapshot } from "../../shared/status.js";
 
@@ -317,8 +317,7 @@ function renderCharts(card: DocumentFragment, service: Service) {
   }
 }
 
-function drawUptimeFill(cell: HTMLElement, ratio: number | null, tone: string) {
-  cell.dataset.tone = tone;
+function drawUptimeFill(cell: HTMLElement, ratio: number | null) {
   if (ratio === null || ratio === 0) return;
   // SVG geometry uses exact ratios without adding inline styles to the CSP.
   const ns = "http://www.w3.org/2000/svg";
@@ -330,6 +329,7 @@ function drawUptimeFill(cell: HTMLElement, ratio: number | null, tone: string) {
   fill.setAttribute("width", "1");
   fill.setAttribute("y", String(1 - ratio));
   fill.setAttribute("height", String(ratio));
+  fill.setAttribute("fill", uptimeFillColor(ratio));
   graphic.append(fill);
   cell.append(graphic);
 }
@@ -351,7 +351,7 @@ function renderUptime(card: DocumentFragment, service: Service) {
   const ranges = element(breakdown, ".uptime-history-ranges");
   element(breakdown, "summary").textContent = t("分时明细");
   history.hidden = legend.hidden = breakdown.hidden = !bins;
-  caption.textContent = t(bins ? "每两小时的探测结果，从旧到新；填充高度表示成功比例" : "暂无可用率时间线");
+  caption.textContent = t(bins ? "每两小时的探测结果，从旧到新；填充高度表示成功比例，颜色随比例渐变" : "暂无可用率时间线");
   if (bins) {
     const stateLabels = { up: "全部成功", down: "全部失败", mixed: "部分失败", empty: "暂无样本" } as const;
     for (const [state, label] of Object.entries(stateLabels)) {
@@ -359,9 +359,8 @@ function renderUptime(card: DocumentFragment, service: Service) {
       const swatch = document.createElement("span");
       swatch.className = "uptime-swatch";
       swatch.dataset.state = state;
-      const samples = { up: [1, "good"], down: [0, "poor"], mixed: [.5, "poor"], empty: [null, "empty"] } as const;
-      const [ratio, tone] = samples[state as keyof typeof samples];
-      drawUptimeFill(swatch, ratio, tone);
+      const samples = { up: 1, down: 0, mixed: .5, empty: null } as const;
+      drawUptimeFill(swatch, samples[state as keyof typeof samples]);
       swatch.setAttribute("aria-hidden", "true");
       item.append(swatch, t(label));
       legend.append(item);
@@ -369,7 +368,7 @@ function renderUptime(card: DocumentFragment, service: Service) {
     for (const bin of bins) {
       const cell = document.createElement("span");
       cell.dataset.state = bin.state;
-      drawUptimeFill(cell, bin.ratio, bin.tone);
+      drawUptimeFill(cell, bin.ratio);
       const range = binTimeFormat.formatRange(new Date(bin.startMinute * 60_000), new Date((bin.startMinute + 120) * 60_000));
       const counts = bin.ratio === null ? "" : ` · ${displayPercent(bin.ratio)} (${numberFormat.format(bin.available)}/${numberFormat.format(bin.total)} ${t("次")})`;
       cell.title = `${range} UTC · ${t(stateLabels[bin.state])}${counts}`;

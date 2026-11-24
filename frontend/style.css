@@ -165,9 +165,6 @@ h3 { margin: 0; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
 }
 :is(.uptime-history > span, .uptime-swatch)[data-state="down"] { background: transparent; border: 1px solid var(--error); }
 :is(.uptime-history, .uptime-swatch) svg { display: block; inline-size: 100%; block-size: 100%; }
-[data-tone="good"] rect { fill: var(--good); }
-[data-tone="caution"] rect { fill: var(--caution); }
-[data-tone="poor"] rect { fill: var(--error); }
 .uptime-history-detail { color: var(--muted); font-size: 11px; margin: 5px 0; }
 .service-uptime-value { font-variant-numeric: tabular-nums; }
 .state[data-state="synced"], .state[data-state="online"] { color: var(--good); }

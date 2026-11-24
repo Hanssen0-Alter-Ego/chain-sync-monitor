@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
-import { currentProbe, probeTotals, projectRepository, syncComparisons, uptimeBins, uptimeDay } from "../dist/web/presentation.js";
+import { currentProbe, probeTotals, projectRepository, syncComparisons, uptimeBins, uptimeDay, uptimeFillColor } from "../dist/web/presentation.js";
 
 test("a mixed network shows four of five online without conflating sync and reachability", () => {
   const services = [
@@ -32,16 +32,16 @@ test("the uptime chart uses counted probes and rejects missing or impossible sam
   assert.deepEqual(uptimeDay({windows: [window(0, 2)]}), window(0, 2));
 });
 
-test("uptime bins keep exact proportions while the color deadband limits one missed probe", () => {
+test("uptime bins keep exact proportions and probe states", () => {
   const samples = [[480,480], [479,480], [98,100], [97,100], [90,100], [45,100], [0,70], [0,0]];
   const dayBins = Array.from({length:12}, (_, i) => {
     const [available, total] = samples[i] ?? [0,0];
     return {startMinute: i * 120, available, total};
   });
   const bins = uptimeBins({dayBins, windows:[]});
-  assert.deepEqual(bins.slice(0,8).map(({ratio, tone, state})=>[ratio,tone,state]), [
-    [1,"good","up"], [479/480,"good","mixed"], [.98,"good","mixed"], [.97,"caution","mixed"],
-    [.9,"caution","mixed"], [.45,"poor","mixed"], [0,"poor","down"], [null,"empty","empty"],
+  assert.deepEqual(bins.slice(0,8).map(({ratio, state})=>[ratio,state]), [
+    [1,"up"], [479/480,"mixed"], [.98,"mixed"], [.97,"mixed"],
+    [.9,"mixed"], [.45,"mixed"], [0,"down"], [null,"empty"],
   ]);
   assert.equal(uptimeBins({dayBins: dayBins.slice(1), windows:[]}), null);
 });
@@ -249,7 +249,7 @@ test("built dashboard renders two dimensions and preserves the expanded row afte
     assert.equal(history.hidden, false);
     assert.deepEqual(history.children.slice(8).map(cell => cell.dataset.state), ["up", "empty", "mixed", "down"]);
     assert.match(history.children[7].title, /Some checks failed · 99\.79% \(479\/480 checks\)/);
-    assert.equal(history.children[7].dataset.tone, "good");
+    assert.equal(history.children[7].children[0].children[0].attrs.fill, uptimeFillColor(479/480));
     assert.equal(history.children[7].children[0].children[0].attrs.height, String(479/480));
     assert.equal(history.children[9].children.length, 0);
     assert.match(history.children[10].title, /Some checks failed · 50% \(1\/2 checks\)/);
@@ -397,4 +397,17 @@ test("the timeline and legend use hollow solid outlines for failure and dotted o
     "background: transparent; border: 1px dotted var(--muted);",
     "background: Canvas; border-color: CanvasText;",
   ]);
+});
+
+test("uptime fill colors blend without abrupt changes at previous thresholds or the midpoint", () => {
+  assert.equal(uptimeFillColor(1), "#8ddeaa");
+  assert.equal(uptimeFillColor(.5), "#e9c484");
+  assert.equal(uptimeFillColor(0), "#f5a9b8");
+  const rgb = ratio => uptimeFillColor(ratio).slice(1).match(/../g).map(x => Number.parseInt(x, 16));
+  const distance = (a, b) => Math.max(...rgb(a).map((channel, i) => Math.abs(channel - rgb(b)[i])));
+  assert.ok(distance(1, 479/480) <= 1);
+  for (const boundary of [.98, .9, .5]) {
+    assert.ok(distance(boundary - .001, boundary + .001) <= 2);
+  }
+  assert.ok(new Set([.1,.2,.3,.4,.5,.6,.7,.8,.9,1].map(uptimeFillColor)).size === 10);
 });

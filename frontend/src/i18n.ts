@@ -64,7 +64,7 @@ export const en = {
   "全部成功": "All checks succeeded",
   "全部失败": "All checks failed",
   "部分失败": "Some checks failed",
-  "每两小时的探测结果，从旧到新；填充高度表示成功比例": "Two-hour probe results, oldest to newest. Fill height shows the share of successful checks.",
+  "每两小时的探测结果，从旧到新；填充高度表示成功比例，颜色随比例渐变": "Two-hour probe results, oldest to newest. Fill height shows the share of successful checks; the color changes gradually with that share.",
   "跳至服务状态": "Skip to Service Status",
   "暂无可用率时间线": "Uptime timeline unavailable",
   "分时明细": "Interval Breakdown",

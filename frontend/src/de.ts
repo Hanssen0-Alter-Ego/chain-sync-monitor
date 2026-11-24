@@ -43,7 +43,7 @@ export default {
   "全部成功": "Alle Prüfungen erfolgreich",
   "全部失败": "Alle Prüfungen fehlgeschlagen",
   "部分失败": "Einige Prüfungen fehlgeschlagen",
-  "每两小时的探测结果，从旧到新；填充高度表示成功比例": "Prüfergebnisse je Zwei-Stunden-Zeitraum, älteste zuerst. Die Füllhöhe zeigt den Anteil erfolgreicher Prüfungen.",
+  "每两小时的探测结果，从旧到新；填充高度表示成功比例，颜色随比例渐变": "Prüfergebnisse je Zwei-Stunden-Zeitraum, älteste zuerst. Die Füllhöhe zeigt den Anteil erfolgreicher Prüfungen. Die Farbe ändert sich stufenlos mit diesem Anteil.",
   "跳至服务状态": "Zum Dienststatus springen",
   "暂无可用率时间线": "Verfügbarkeitsverlauf nicht verfügbar",
   "分时明细": "Details je Zeitraum",
