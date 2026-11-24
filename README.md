@@ -13,7 +13,7 @@ mkdir -p config
 cp config.example.toml config/config.toml
 ```
 
-Edit `config/config.toml`. In the default example, mainnet/testnet CKB use ports 8114/8116, BTC 8332/18332, SPV 8888/8889 and testnet3 Blockbook 19130. Remove service sections you don't need. For Bitcoin Core, set the RPC user and create the configured password files under `config/`. Never commit this directory. The container runs as UID/GID 65532, which needs read access to those files and traversal access to the directory; use a narrow ACL or group, not world-readable passwords.
+Edit `config/config.toml`. In the default example, mainnet/testnet CKB use ports 8114/8116, BTC 8332/18332, SPV 8888/8889 and testnet Blockbook 19130. Remove service sections you don't need. For Bitcoin Core, set the RPC user and create the configured password files under `config/`. Never commit this directory. The container runs as UID/GID 65532, which needs read access to those files and traversal access to the directory; use a narrow ACL or group, not world-readable passwords.
 
 If your nodes already publish on the host loopback (as in the example):
 
@@ -55,9 +55,11 @@ Copy the block from [Caddyfile.example](Caddyfile.example) into your host's Cadd
 
 - **CKBadger:** query `/api/mainnet/v1/statistics/network` and `/api/testnet/v1/statistics/network` for a shared frontend, or `/api/v1/statistics/network` for a standalone instance, to get indexed/target heights and deep-fork status. Startup `503 initializing` shows as syncing but does not count as available until the endpoint returns usable data.
 
-- **DOB Decoder:** configure `[networks.mainnet.dob_decoder]` and/or `[networks.testnet3.dob_decoder]`. The monitor checks the endpoint via JSON-RPC POST `dob_protocol_version` (no arguments), shows its advertised protocol versions and includes successful replies in uptime. It does not decode an asset or check chain sync. See [config.example.toml](config.example.toml) for both network URLs.
+- **DOB Decoder:** configure `[networks.mainnet.dob_decoder]` and/or `[networks.testnet.dob_decoder]`. The monitor checks the endpoint via JSON-RPC POST `dob_protocol_version` (no arguments), shows its advertised protocol versions and includes successful replies in uptime. It does not decode an asset or check chain sync. See [config.example.toml](config.example.toml) for both network URLs.
 
-Generic HTTP checks use a configured GET URL and count 2xx as available without following redirects. BTC Asset API's `/healthcheck` measures dependency and worker health, not sync progress or SPV proof validity. Mainnet Blockbook is optional and configured the same way as testnet3.
+Use `[networks.testnet.*]` for testnet services. The Bitcoin network depends on the node behind the configured URL; this label does not select a chain or extend supported probe networks. `[networks.testnet3.*]` is a legacy alias: choose one spelling for all testnet services. Switching the table names does not change status API IDs or reset uptime history.
+
+Generic HTTP checks use a configured GET URL and count 2xx as available without following redirects. BTC Asset API's `/healthcheck` measures dependency and worker health, not sync progress or SPV proof validity. Mainnet Blockbook is optional and configured the same way as the testnet instance.
 
 ## Availability history
 

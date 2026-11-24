@@ -24,20 +24,20 @@ url = "http://127.0.0.1:8888"
 # hash_type = "type"
 # args = "0x..."
 
-[networks.testnet3.ckb]
+[networks.testnet.ckb]
 url = "http://127.0.0.1:8116"
 
-[networks.testnet3.btc]
+[networks.testnet.btc]
 url = "http://127.0.0.1:18332"
 username = "monitor"
 password_file = "btc-testnet3.password"
 
-[networks.testnet3.blockbook]
+[networks.testnet.blockbook]
 url = "http://127.0.0.1:19130/api/"
 
-[networks.testnet3.spv]
+[networks.testnet.spv]
 url = "http://127.0.0.1:8889"
-# [networks.testnet3.spv.type_script]
+# [networks.testnet.spv.type_script]
 # code_hash = "0x..."
 # hash_type = "type"
 # args = "0x..."
@@ -51,11 +51,11 @@ url = "http://127.0.0.1:8889"
 # public_url = "https://explorer.example.com/"
 #
 # For standalone CKBadger (one server per network), use /api/v1/statistics/network.
-# [networks.testnet3.ckbadger]
+# [networks.testnet.ckbadger]
 # url = "http://127.0.0.1:8100/api/testnet/v1/statistics/network"
 #
 # Repeat this array table with a different stable ID for each HTTP-only probe.
-# [[networks.testnet3.http]]
+# [[networks.testnet.http]]
 # id = "btc-asset-api"
 # label = "BTC Asset API"
 # github_url = "https://github.com/RGBPlusPlus/btc-assets-api"
@@ -66,5 +66,5 @@ url = "http://127.0.0.1:8889"
 # [networks.mainnet.dob_decoder]
 # url = "https://dob-decoder.ckbccc.com"
 #
-# [networks.testnet3.dob_decoder]
+# [networks.testnet.dob_decoder]
 # url = "https://dob-decoder-test.ckbccc.com"

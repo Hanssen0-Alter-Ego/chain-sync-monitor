@@ -66,10 +66,17 @@ url = "${target}/valid"
 url = "${target}/empty"
 `);
   const cfg = loadConfig(path);
-  const db = new HistoryStore(cfg.historyPath);
-  const monitor = new Monitor(cfg, db);
+  const monitor = new Monitor(cfg, new HistoryStore(cfg.historyPath));
   await monitor.poll();
-  assert.deepEqual([...seen].sort(), ["/empty", "/valid"]);
+  writeFileSync(path, readFileSync(path, "utf8").replace("networks.testnet3", "networks.testnet"));
+  const preferred = loadConfig(path);
+  assert.deepEqual(preferred, cfg);
+  const switchedMonitor = new Monitor(preferred, new HistoryStore(preferred.historyPath));
+  await switchedMonitor.poll();
+  assert.deepEqual([...seen].sort(), ["/empty", "/empty", "/valid", "/valid"]);
+  assert.equal(switchedMonitor.snapshot.services[1].network, "testnet3");
+  assert.equal(switchedMonitor.snapshot.services[1].id, "testnet3-dob_decoder");
+  assert.equal(switchedMonitor.snapshot.services[1].availability.windows[0].total, 2);
   const [main, testnet] = monitor.snapshot.services;
   assert.equal(main.id, "mainnet-dob_decoder");
   assert.equal(main.state, "online");
@@ -85,6 +92,20 @@ url = "${target}/empty"
     assert.equal(failed.available, false, url);
     assert.notEqual(failed.reading.state, "online", url);
   }
+});
+
+test("testnet config aliases cannot be mixed and errors use the configured spelling", (t) => {
+  const path = join(directory(t), "monitor.toml");
+  writeFileSync(path, `[networks.testnet.dob_decoder]
+url = "https://decoder.example"
+[networks.testnet3.ckb]
+url = "https://ckb.example"
+`);
+  assert.throws(() => loadConfig(path), /networks\.testnet 和 networks\.testnet3 不能同时配置/);
+  writeFileSync(path, `[networks.testnet.dob_decoder]
+url = "invalid"
+`);
+  assert.throws(() => loadConfig(path), /networks\.testnet\.dob_decoder\.url/);
 });
 
 test("separate frontend status API, all probes, CORS and no implicit RPC/config disclosure", async (t) => {

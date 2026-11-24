@@ -119,17 +119,23 @@ export function loadConfig(path: string): Config {
   }
   const endpoints: Config["endpoints"] = { mainnet: new Map(), testnet3: new Map() };
   const configured = table(raw.networks ?? {}, "networks");
-  if (Object.keys(configured).some((net) => !Object.hasOwn(endpoints, net))) {
-    throw new ConfigError("网络名称仅支持 mainnet 和 testnet3。");
+  if (Object.keys(configured).some((net) => net !== "testnet" && !Object.hasOwn(endpoints, net))) {
+    throw new ConfigError("网络名称仅支持 mainnet 和 testnet（旧写法 testnet3 仍可用）。");
+  }
+  if (Object.hasOwn(configured, "testnet") && Object.hasOwn(configured, "testnet3")) {
+    throw new ConfigError("networks.testnet 和 networks.testnet3 不能同时配置；请将测试网服务统一放到 networks.testnet。");
   }
   for (const net of networks) {
-    const network = table(configured[net] ?? {}, `networks.${net}`);
+    // Keep API and uptime IDs stable even when the preferred config spelling is used.
+    const key = net === "testnet3" && Object.hasOwn(configured, "testnet") ? "testnet" : net;
+    const fieldPrefix = `networks.${key}`;
+    const network = table(configured[key] ?? {}, fieldPrefix);
     for (const kind of Object.keys(network)) {
-      if (kind !== "http" && !Object.hasOwn(labels, kind)) throw new ConfigError(`networks.${net} 包含不支持的服务。`);
+      if (kind !== "http" && !Object.hasOwn(labels, kind)) throw new ConfigError(`${fieldPrefix} 包含不支持的服务。`);
     }
     for (const kind of Object.keys(labels) as (keyof typeof labels)[]) {
       if (!Object.hasOwn(network, kind)) continue;
-      const field = `networks.${net}.${kind}`;
+      const field = `${fieldPrefix}.${kind}`;
       const service = table(network[kind], field);
       const endpoint: Endpoint = {
         kind, label: labels[kind], url: httpUrl(service.url, field + ".url"),
@@ -147,9 +153,9 @@ export function loadConfig(path: string): Config {
       endpoints[net].set(kind, endpoint);
     }
     const probes = network.http ?? [];
-    if (!Array.isArray(probes) || probes.length > 8) throw new ConfigError(`networks.${net}.http 必须是数组，每个网络最多 8 项。`);
+    if (!Array.isArray(probes) || probes.length > 8) throw new ConfigError(`${fieldPrefix}.http 必须是数组，每个网络最多 8 项。`);
     for (const probe of probes as unknown[]) {
-      const field = `networks.${net}.http`;
+      const field = `${fieldPrefix}.http`;
       const service = table(probe, field);
       const { id, label } = service;
       if (typeof id !== "string" || !/^[a-z0-9][a-z0-9-]{0,39}$/.test(id) || endpoints[net].has("http:" + id)) {
