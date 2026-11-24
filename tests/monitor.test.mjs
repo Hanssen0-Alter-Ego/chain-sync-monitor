@@ -453,12 +453,15 @@ test("Netlify artifact embeds only the HTTPS status endpoint and restricts brows
   assert.equal(run("https://username:password@example.com/api/status").status, 1);
   assert.equal(run("https://api.example.com/api/status").status, 0);
   assert.match(readFileSync(file, "utf8"), /https:\/\/api.example.com\/api\/status/);
+  assert.match(readFileSync(index, "utf8"), /property="og:url" content="https:\/\/chain-sync-monitor\.netlify\.app\/"/);
   assert.doesNotMatch(readFileSync(file, "utf8"), /sample-unrelated-secret/);
   assert.match(readFileSync(headers, "utf8"), /connect-src 'self' https:\/\/api.example.com/);
   assert.equal(run("https://api.example.com/api/status", "https://monitor.example.org").status, 0);
   assert.match(readFileSync(index, "utf8"), /property="og:image" content="https:\/\/monitor\.example\.org\/og\.png"/);
+  assert.match(readFileSync(index, "utf8"), /property="og:url" content="https:\/\/monitor\.example\.org\/"/);
   assert.equal(run("https://api.example.com/api/status", "https://attacker@example.org/deploy").status, 0);
   assert.match(readFileSync(index, "utf8"), /property="og:image" content="https:\/\/chain-sync-monitor\.netlify\.app\/og\.png"/);
+  assert.match(readFileSync(index, "utf8"), /property="og:url" content="https:\/\/chain-sync-monitor\.netlify\.app\/"/);
 });
 test("CKBadger warm-up does not mark the service available; wrong BTC network is not healthy", async (t) => {
   const base = await listen(t, createServer((req, res) => {

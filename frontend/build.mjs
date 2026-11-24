@@ -29,7 +29,9 @@ if (process.env.NETLIFY === "true" && process.env.URL) {
   } catch { /* Keep stable default for malformed values. */ }
 }
 const index = readFileSync(new URL("index.html", folder), "utf8");
-writeFileSync(new URL("index.html", dist), index.replace(defaultShareOrigin + "/og.png", shareOrigin + "/og.png"));
+writeFileSync(new URL("index.html", dist), index.replaceAll(
+  `content="${defaultShareOrigin}/`, `content="${shareOrigin}/`,
+));
 writeFileSync(new URL("config.js", dist), "window.CHAIN_SYNC_MONITOR_API_URL = " + JSON.stringify(endpoint) + ";\n");
 writeFileSync(new URL("_headers", dist), [
   "/*",
