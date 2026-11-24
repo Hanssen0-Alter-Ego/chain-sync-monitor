@@ -56,6 +56,8 @@ export const en = {
   "等待数据": "Waiting for data",
   "等待状态数据…": "Waiting for status…",
   "暂无服务数据": "No service data",
+  "需要关注": "Needs attention",
+  "暂无就绪服务": "No ready services",
   "未命名服务": "Unnamed service",
   "同步进度": "Sync progress",
   "探测可用率": "Probe availability",

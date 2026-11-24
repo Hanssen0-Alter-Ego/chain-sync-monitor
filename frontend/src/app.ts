@@ -1,4 +1,4 @@
-import { currentProbe, probeTotals, projectRepository, syncComparisons, uptimeBins, uptimeDay, uptimeFillColor } from "./presentation.js";
+import { currentProbe, probeTotals, projectRepository, servicePriority, syncComparisons, uptimeBins, uptimeDay, uptimeFillColor } from "./presentation.js";
 import { dashboardLanguage, translate, type DashboardLanguage } from "./i18n.js";
 import type { Availability, Service, Snapshot } from "../../shared/status.js";
 
@@ -81,14 +81,16 @@ let timer: number | undefined;
 
 // Match service and network containers by key; patch stable descendants in place.
 // Preserve disclosure state and existing text nodes for accessibility cursors.
-function patchChildren(target: Node, source: Node) {
+function patchChildren(target: Node, source: Node, previousCards: Map<string, HTMLElement>) {
   const key = (node: Node | null) => node instanceof HTMLElement ? node.dataset.renderKey : undefined;
   const previous = Array.from(target.childNodes);
   const keyed = new Map(previous.filter(node => key(node)).map(node => [key(node), node]));
   let anchor = target.firstChild;
   for (const fresh of Array.from(source.childNodes)) {
     const id = key(fresh);
-    let current = id ? keyed.get(id) ?? null : key(anchor) ? null : anchor;
+    let current = id
+      ? keyed.get(id) ?? (fresh.nodeName === "ARTICLE" ? previousCards.get(id) : undefined) ?? null
+      : key(anchor) ? null : anchor;
     if (!current || current.nodeName !== fresh.nodeName) {
       target.insertBefore(fresh, anchor);
       continue;
@@ -104,7 +106,7 @@ function patchChildren(target: Node, source: Node) {
       }
       if (current instanceof HTMLMeterElement && fresh instanceof HTMLMeterElement && current.value !== fresh.value) current.value = fresh.value;
       if (current instanceof HTMLProgressElement && fresh instanceof HTMLProgressElement && current.value !== fresh.value) current.value = fresh.value;
-      patchChildren(current, fresh);
+      patchChildren(current, fresh, previousCards);
     } else if (current.nodeType === Node.TEXT_NODE) {
       if (current.nodeValue !== fresh.nodeValue) current.nodeValue = fresh.nodeValue;
     } else if (!current.isEqualNode(fresh)) {
@@ -124,33 +126,50 @@ function render(snap: Snapshot | null) {
   const focused = document.activeElement;
   const focusedRow = focused?.closest<HTMLElement>("article[data-render-key]");
   const fragment = document.createDocumentFragment();
-  for (const network of networks) {
+  // Retain cards across sections so a transient outage/recovery doesn't reset
+  // open details, links, or focus. The first section remains mounted when empty.
+  const previousCards = new Map(Array.from(networkContainer.querySelectorAll<HTMLElement>("article[data-render-key]"),
+    card => [card.dataset.renderKey!, card]));
+  const knownServices = (snap?.services ?? []).filter(service => networks.some(network => network.id === service?.network));
+  const attention = knownServices.filter(service => servicePriority(service) < 2)
+    .sort((a, b) => servicePriority(a) - servicePriority(b));
+
+  function sectionFor(id: string, label: string) {
     const section = networkTemplate.content.cloneNode(true) as DocumentFragment;
     const networkElement = element(section, ".network");
-    networkElement.dataset.network = network.id;
-    networkElement.dataset.renderKey = network.id;
-    element(section, "h2").textContent = t(network.label);
-    const cards = element(section, ".cards");
-    const services = snap?.services.filter((record) => record?.network === network.id) ?? [];
+    networkElement.dataset.network = id;
+    networkElement.dataset.renderKey = id;
+    element(section, "h2").textContent = t(label);
+    return { section, networkElement, cards: element(section, ".cards") };
+  }
+
+  const priority = sectionFor("attention", "需要关注");
+  priority.networkElement.hidden = !attention.length;
+  for (const service of attention) {
+    const label = networks.find(network => network.id === service.network)?.label;
+    priority.cards.append(makeCard(service, label));
+  }
+  fragment.append(priority.section);
+
+  for (const network of networks) {
+    const { section, cards } = sectionFor(network.id, network.label);
+    const services = knownServices.filter(service => service.network === network.id);
+    const ready = services.filter(service => servicePriority(service) === 2);
     const { online, unconfirmed, total } = probeTotals(services);
     element(section, ".network-summary").textContent = total
       ? `${numberFormat.format(online)} / ${numberFormat.format(total)} ${t("当前在线")}`
         + (unconfirmed ? ` · ${numberFormat.format(unconfirmed)} ${t("未确认")}` : "")
       : "";
-    for (const service of services) {
-      const card = makeCard(service);
-      element(card, "article").dataset.renderKey = service.id;
-      cards.append(card);
-    }
-    if (!services.length) {
+    for (const service of ready) cards.append(makeCard(service));
+    if (!ready.length) {
       const empty = document.createElement("p");
       empty.className = "empty";
-      empty.textContent = t(!snap ? "等待状态数据…" : "暂无服务数据");
+      empty.textContent = t(!snap ? "等待状态数据…" : !total ? "暂无服务数据" : "暂无就绪服务");
       cards.append(empty);
     }
     fragment.append(section);
   }
-  patchChildren(networkContainer, fragment);
+  patchChildren(networkContainer, fragment, previousCards);
   if (focusedRow && focused && (!focused.isConnected || focused.closest("[hidden]") || document.activeElement !== focused)) {
     const fallback = focusedRow.isConnected ? focusedRow.querySelector<HTMLElement>(".service-details > summary") : networkContainer;
     if (focused.isConnected && !focused.closest("[hidden]") && focused instanceof HTMLElement) focused.focus({ preventScroll: true });
@@ -158,12 +177,17 @@ function render(snap: Snapshot | null) {
   }
 }
 
-function makeCard(service: Service) {
+function makeCard(service: Service, networkLabel?: string) {
   const card = serviceTemplate.content.cloneNode(true) as DocumentFragment;
+  element(card, "article").dataset.renderKey = service.id;
   const state = Object.hasOwn(states, service.state) ? service.state : "unknown";
   const kind = element(card, ".kind");
   kind.hidden = service.kind === "http";
   kind.textContent = Object.hasOwn(kinds, service.kind) ? kinds[service.kind] : "";
+  const context = element(card, ".card-network");
+  context.hidden = !networkLabel;
+  context.textContent = networkLabel ? t(networkLabel) : "";
+  element(card, ".card-context").hidden = !networkLabel && kind.hidden;
   const heading = element(card, "h3");
   heading.textContent = service.label
     ? service.kind === "http" ? service.label : t(service.label)

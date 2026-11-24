@@ -11,6 +11,17 @@ export function currentProbe(service: Service): boolean | null {
   return null;
 }
 
+// The connection probe and synchronization are independent. HTTP-only
+// services are ready once reachable; a Bitcoin node can still be indexing.
+export function servicePriority(service: Service): 0 | 1 | 2 {
+  const probe = currentProbe(service);
+  if (probe === false || service.state === "offline") return 0;
+  if (probe !== true || (service.state !== "synced" && !(service.kind === "http" && service.state === "online"))) return 1;
+  if (service.kind === "btc" && (service.bitcoinIndexes?.txindex?.state === "syncing"
+      || service.bitcoinIndexes?.txospenderindex?.state === "syncing")) return 1;
+  return 2;
+}
+
 export function probeTotals(services: Service[]) {
   let online = 0, unconfirmed = 0;
   for (const service of services) {

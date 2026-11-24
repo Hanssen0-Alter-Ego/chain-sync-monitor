@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
-import { currentProbe, probeTotals, projectRepository, syncComparisons, uptimeBins, uptimeDay, uptimeFillColor } from "../dist/web/presentation.js";
+import { currentProbe, probeTotals, projectRepository, servicePriority, syncComparisons, uptimeBins, uptimeDay, uptimeFillColor } from "../dist/web/presentation.js";
 
 test("a mixed network shows four of five online without conflating sync and reachability", () => {
   const services = [
@@ -22,6 +22,20 @@ test("legacy ambiguous samples and explicit pending samples do not pretend to be
   assert.equal(currentProbe({ kind: "spv", state: "unknown", metrics: [{ label: "证明 RPC", value: "在线" }] }), true);
   assert.equal(currentProbe({ kind: "spv", state: "unknown", metrics: [{ label: "RPC", value: "在线" }] }), null);
   assert.equal(currentProbe({ kind: "ckb", state: "synced", probeAvailable: null }), null);
+});
+
+test("service priority keeps failed probes ahead of incomplete sync and ready services", () => {
+  assert.equal(servicePriority({kind:"btc", state:"synced", probeAvailable:false}), 0);
+  assert.equal(servicePriority({kind:"ckbadger", state:"offline"}), 0);
+  for (const state of ["syncing", "unknown", "degraded"]) {
+    assert.equal(servicePriority({kind:"ckbadger", state, probeAvailable:true}), 1);
+  }
+  assert.equal(servicePriority({kind:"ckb", state:"synced", probeAvailable:null}), 1);
+  assert.equal(servicePriority({kind:"http", state:"online", probeAvailable:true}), 2);
+  assert.equal(servicePriority({kind:"ckb", state:"synced"}), 2);
+  const btc = {kind:"btc", state:"synced", probeAvailable:true};
+  assert.equal(servicePriority({...btc, bitcoinIndexes:{txindex:{state:"syncing"}}}), 1);
+  assert.equal(servicePriority({...btc, bitcoinIndexes:{txindex:{state:"disabled"}}}), 2);
 });
 
 test("the uptime chart uses counted probes and rejects missing or impossible samples", () => {
@@ -88,7 +102,7 @@ test("GitHub repository icons do not conflate public service links or arbitrary 
   }
 });
 
-test("built dashboard renders two dimensions and preserves the expanded row after refresh", async () => {
+test("built dashboard prioritizes both networks and preserves expanded rows across recovery", async () => {
   class Element {
     children = [];
     tagName = "DIV";
@@ -117,6 +131,9 @@ test("built dashboard renders two dimensions and preserves the expanded row afte
       return child;
     }
     removeChild(child) {
+      for (let focus = globalThis.document.activeElement; focus; focus = focus.parentElement) {
+        if (focus === child) globalThis.document.activeElement = globalThis.document;
+      }
       if (child.stubSelector) this.selectors.delete(child.stubSelector);
       else {
         const index = this.children.indexOf(child);
@@ -126,7 +143,7 @@ test("built dashboard renders two dimensions and preserves the expanded row afte
     }
     closest(selector) {
       if (selector === "[hidden]" && this.hidden === true) return this;
-      if (selector === "article[data-render-key]" && this.dataset.renderKey) return this;
+      if (selector === "article[data-render-key]" && this.nodeName === "ARTICLE" && this.dataset.renderKey) return this;
       return this.parentElement?.closest(selector) ?? null;
     }
     dataset = {};
@@ -149,13 +166,14 @@ test("built dashboard renders two dimensions and preserves the expanded row afte
       const output = [];
       const walk = (node) => {
         if (!(node instanceof Element)) return;
-        if (selector === ".service-details[open]" && node.open) output.push(node);
+        if ((selector === ".service-details[open]" && node.open)
+            || (selector === "article[data-render-key]" && node.nodeName === "ARTICLE" && node.dataset.renderKey)) output.push(node);
         for (const child of [...node.children, ...node.selectors.values()]) walk(child);
       };
       walk(this);
       return output;
     }
-    cloneNode() { return new Element(); }
+    cloneNode() { return Object.assign(new Element(), {tagName: this.tagName}); }
     append(...children) { for (const child of children) { if (child instanceof Element) child.parentElement = this; this.children.push(child); } }
     replaceChildren(...children) { this.children = children; }
     hasChildNodes() { return this.children.length > 0; }
@@ -185,8 +203,8 @@ test("built dashboard renders two dimensions and preserves the expanded row afte
   document.createDocumentFragment = () => new Element();
   document.createElement = tag => Object.assign(new Element(), {tagName:tag});
   document.createElementNS = (_ns, tag) => document.createElement(tag);
-  document.querySelector("#network-template").content = new Element();
-  document.querySelector("#service-template").content = new Element();
+  document.querySelector("#network-template").content = document.createElement("SECTION");
+  document.querySelector("#service-template").content = document.createElement("ARTICLE");
   const services = [
     ["btc", "offline", false], ["ckb", "synced", true], ["blockbook", "syncing", true],
     ["spv", "unknown", true], ["ckbadger", "syncing", true],
@@ -208,6 +226,7 @@ test("built dashboard renders two dimensions and preserves the expanded row afte
     { id: "testnet3-http:other", network:"testnet3", kind:"http", label:"Other", state:"offline", probeAvailable:false,
       metrics:[], availability:{windows:[]} },
   );
+  const serviceIds = services.map(service => service.id);
   try {
     for (const key of ["HTMLElement", "HTMLMeterElement", "HTMLProgressElement"]) globalThis[key] = Element;
     globalThis.Node = { TEXT_NODE: 3 };
@@ -223,9 +242,20 @@ test("built dashboard renders two dimensions and preserves the expanded row afte
     globalThis.fetch = async () => new Response(JSON.stringify({ updatedAt: new Date().toISOString(), intervalSeconds: 30, services }));
     await import("../dist/web/app.js");
     await new Promise(resolve => setImmediate(resolve));
-    const section = () => document.querySelector("#networks").children[0];
-    const card = index => section().querySelector(".cards").children[index];
-    assert.equal(section().querySelector(".network-summary").textContent, "4 / 5 online");
+    const container = document.querySelector("#networks");
+    const section = id => container.children.find(row => row.dataset.network === id);
+    const rows = id => section(id).querySelector(".cards").children;
+    const ids = id => rows(id).map(row => row.dataset.renderKey).filter(Boolean);
+    const card = index => container.querySelectorAll("article[data-render-key]").find(row => row.dataset.renderKey === serviceIds[index]);
+    assert.deepEqual(container.children.map(row => row.dataset.network), ["attention", "mainnet", "testnet3"]);
+    assert.equal(section("attention").querySelector("h2").textContent, "Needs attention");
+    assert.deepEqual(ids("attention"), ["btc", "testnet3-http:other", "blockbook", "spv", "ckbadger"]);
+    assert.deepEqual(ids("mainnet"), ["ckb"]);
+    assert.deepEqual(ids("testnet3"), ["testnet3-http:btc-asset-api"]);
+    assert.equal(card(0).querySelector(".card-network").textContent, "Mainnet");
+    assert.equal(card(6).querySelector(".card-network").textContent, "Testnet");
+    assert.equal(card(1).querySelector(".card-network").hidden, true);
+    assert.equal(section("mainnet").querySelector(".network-summary").textContent, "4 / 5 online");
     assert.equal(card(3).querySelector(".probe-state").querySelector(".state-label").textContent, "Online");
     assert.equal(card(3).querySelector(".sync-state").querySelector(".state-label").textContent, "Sync not verified");
     assert.equal(card(1).querySelector(".sync-state").dataset.state, "synced");
@@ -235,7 +265,7 @@ test("built dashboard renders two dimensions and preserves the expanded row afte
     assert.doesNotMatch(template, /class="(?:network-code|eyebrow)"/);
     assert.match(template, /<details class="service-details">[\s\S]*?<meter[\s\S]*?<\/details>/);
     const strips = index => card(index).querySelector(".sync-comparisons").children;
-    assert.equal(section().querySelector("h2").textContent, "Mainnet");
+    assert.equal(section("mainnet").querySelector("h2").textContent, "Mainnet");
     assert.equal(card(2).querySelector(".github-link").href, "https://github.com/trezor/blockbook");
     assert.equal(strips(1)[0].children[1].children[0].attrs["aria-valuetext"], "99.99%");
     assert.equal(strips(1)[1].children[1].children[0].attrs["aria-valuetext"], "100%");
@@ -283,13 +313,12 @@ test("built dashboard renders two dimensions and preserves the expanded row afte
     assert.equal(card(0).querySelector(".service-uptime-value").textContent, "0%");
     assert.equal(card(3).querySelector(".service-uptime-value").textContent, "No samples");
     assert.match(card(2).querySelector(".service-details").querySelector("summary").attrs["aria-label"], /24-hour uptime 75%/);
-    assert.equal(document.querySelector("#networks").children[1].querySelector("h2").textContent, "Testnet");
-    const httpRows = document.querySelector("#networks").children[1].querySelector(".cards").children;
-    assert.equal(httpRows[0].querySelector(".kind").hidden, true);
-    assert.equal(httpRows[0].querySelector(".http-measurements").querySelector(".http-status").textContent, "200");
-    assert.equal(httpRows[0].querySelector(".http-measurements").querySelector(".http-latency").textContent, "0 ms");
-    assert.equal(httpRows[1].querySelector(".http-measurements").querySelector(".http-status").textContent, "No response");
-    assert.equal(httpRows[1].querySelector(".http-measurements").querySelector(".http-latency").textContent, "No data");
+    assert.equal(section("testnet3").querySelector("h2").textContent, "Testnet");
+    assert.equal(card(5).querySelector(".kind").hidden, true);
+    assert.equal(card(5).querySelector(".http-measurements").querySelector(".http-status").textContent, "200");
+    assert.equal(card(5).querySelector(".http-measurements").querySelector(".http-latency").textContent, "0 ms");
+    assert.equal(card(6).querySelector(".http-measurements").querySelector(".http-status").textContent, "No response");
+    assert.equal(card(6).querySelector(".http-measurements").querySelector(".http-latency").textContent, "No data");
     assert.equal(card(3).querySelector(".uptime-group").hidden, true);
     assert.equal(card(3).querySelector(".no-sync-data").textContent, "No sync data");
     const details = card(3).querySelector(".service-details");
@@ -326,6 +355,28 @@ test("built dashboard renders two dimensions and preserves the expanded row afte
     await timers.filter(timer => timer.delay === 30_000).at(-1).fn();
     assert.equal(breakdown.hidden, false);
     assert.equal(breakdown.open, true);
+    const movedRow = card(2);
+    const recoveredHttp = card(6);
+    services[2].state = "synced";
+    services[6].state = "online";
+    services[6].probeAvailable = true;
+    breakdownSummary.focus();
+    await document.querySelector("#refresh").handlers.get("click")();
+    assert.deepEqual(ids("attention"), ["btc", "spv", "ckbadger"]);
+    assert.deepEqual(ids("mainnet"), ["ckb", "blockbook"]);
+    assert.deepEqual(ids("testnet3"), ["testnet3-http:btc-asset-api", "testnet3-http:other"]);
+    assert.equal(card(2), movedRow);
+    assert.equal(card(6), recoveredHttp);
+    assert.equal(card(2).querySelector(".card-network").hidden, true);
+    assert.equal(blockbookDetails.open, true);
+    assert.equal(breakdown.open, true);
+    assert.equal(document.activeElement, breakdownSummary);
+    services[2].state = "syncing";
+    await document.querySelector("#refresh").handlers.get("click")();
+    assert.deepEqual(ids("attention"), ["btc", "blockbook", "spv", "ckbadger"]);
+    assert.equal(card(2), movedRow);
+    assert.equal(card(2).querySelector(".card-network").hidden, false);
+    assert.equal(document.activeElement, breakdownSummary);
     const firstProject = card(2).querySelector(".github-link");
     firstProject.focus();
     await document.querySelector("#refresh").handlers.get("click")();
@@ -356,6 +407,8 @@ test("built dashboard renders two dimensions and preserves the expanded row afte
     select("zh-CN");
     assert.equal(document.documentElement.lang, "zh-CN");
     assert.equal(languageLabel.textContent, "语言");
+    assert.equal(section("attention").querySelector("h2").textContent, "需要关注");
+    assert.equal(card(2).querySelector(".card-network").textContent, "主网");
     assert.equal(document.querySelector("h1").textContent, "链同步监控");
     assert.equal(card(3).querySelector(".service-details").open, true);
     assert.equal(preferences.get("chain-sync-monitor.language"), "zh-CN");
@@ -376,6 +429,17 @@ test("built dashboard renders two dimensions and preserves the expanded row afte
     globalThis.navigator.languages = ["en"];
     listeners.get("languagechange")();
     assert.equal(document.documentElement.lang, "en");
+    const beforeAllReady = card(2);
+    for (const service of services) {
+      service.state = service.kind === "http" ? "online" : "synced";
+      service.probeAvailable = true;
+    }
+    await refresh.handlers.get("click")();
+    assert.equal(section("attention").hidden, true);
+    assert.deepEqual(ids("attention"), []);
+    assert.deepEqual(ids("mainnet"), serviceIds.slice(0, 5));
+    assert.deepEqual(ids("testnet3"), serviceIds.slice(5));
+    assert.equal(card(2), beforeAllReady);
   } finally {
     for (const [key, descriptor] of Object.entries(original)) {
       if (descriptor) Object.defineProperty(globalThis, key, descriptor);

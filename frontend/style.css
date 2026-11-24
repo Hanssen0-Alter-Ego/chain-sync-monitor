@@ -111,6 +111,7 @@ button[aria-disabled="true"] { color: var(--muted); cursor: wait; }
 h2 { margin: 0; font-size: 14px; font-weight: 600; }
 .network[data-network="mainnet"] h2 { color: var(--error); }
 .network[data-network="testnet3"] h2 { color: var(--signal); }
+.network[data-network="attention"] h2 { color: var(--caution); }
 .network-summary, .empty { color: var(--muted); font-size: 12px; }
 .network-summary { margin-left: auto; font-variant-numeric: tabular-nums; }
 .cards { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
@@ -128,7 +129,8 @@ h2 { margin: 0; font-size: 14px; font-weight: 600; }
   padding: 7px 10px;
   border-bottom: 1px solid var(--line);
 }
-.kind { margin: 0 0 3px; }
+.card-context { display: flex; flex-wrap: wrap; gap: 0 8px; align-items: baseline; margin-bottom: 3px; }
+.card-network { color: var(--muted); font-size: 11px; }
 .project-title { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .github-link { touch-action: manipulation; display: inline-grid; place-items: center; width: 24px; height: 24px; flex: 0 0 24px; color: var(--muted); }
 .github-link:is(:hover, :focus-visible) { color: var(--signal); }
