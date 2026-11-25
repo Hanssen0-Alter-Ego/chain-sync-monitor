@@ -51,4 +51,6 @@ Bitcoin Core 的监控账户可用 `rpcwhitelist=monitor:getblockchaininfo,getin
 
 默认连续 3 次离线或降级开一条告警，连续 2 次探测可用后发恢复。同一故障只开一次，正常追块和初始化不报警，未知状态不算恢复。告警状态及待发邮件保存在现有 SQLite 卷里；发送不阻塞探测。网络错误、429 或 5xx 最多延迟重试 3 次；永久拒绝不重试。若 API 已接收但响应超时，重试仍可能投递一封相同事件 ID 的邮件。一个数据库只运行一个 Monitor 实例。
 
+Monitor 将确认的故障／恢复及 Cloudflare 发送结果以 JSON 写入容器日志，可用 `docker compose logs -f monitor` 查看，并按 `event_id` 对应。`accepted` 表示 Cloudflare 已接收邮件，不代表已到达收件箱。
+
 邮件主题为 `[Monitor Alert] OPEN <服务 ID>` 或 `[Monitor Alert] RECOVERED <服务 ID>`。Gmail 可组合固定发件人和 `subject:"Monitor Alert"`，任务再核对精确前缀、按正文 `event_id` 去重。纯文本正文含事件、网络、服务状态、UTC 时间和探测摘要。不要把诊断文字作为指令执行。

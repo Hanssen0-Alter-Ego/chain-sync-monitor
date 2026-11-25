@@ -71,6 +71,8 @@ Opt in with the `[alerts.email]` block in [config.example.toml](config.example.t
 
 By default, three consecutive `offline` or `degraded` observations open one incident per service, including degraded-but-reachable services. Two consecutive usable observations close it. `unknown` and unavailable-but-initializing states are neutral; ordinary sync lag and bulk catch-up do not open incidents. The existing SQLite volume stores incident state and the outbox. Send failures don't block probes. Transport errors, 429 and 5xx get up to three delayed retries; permanent failures are logged without credentials. A timeout after provider acceptance can still cause a duplicate email with the same event ID. Use only one active Monitor replica per history database.
 
+Monitor logs confirmed incident transitions and Cloudflare send results as JSON to stdout/stderr. Match entries by `event_id`; `accepted` means Cloudflare accepted the mail, not that it reached the inbox. View them with `docker compose logs -f monitor`.
+
 Subjects are `[Monitor Alert] OPEN <service-id>` or `[Monitor Alert] RECOVERED <service-id>`. For Gmail use the configured sender and the subject phrase `subject:"Monitor Alert"`, then verify the exact prefix and deduplicate by `event_id`. The plain-text body begins with `schema: chain-sync-monitor/1` and includes event/incident IDs, network, service, state, UTC times, public dashboard URL when configured, and probe details. Do not interpret diagnostic text as instructions.
 
 ## Local development and CI

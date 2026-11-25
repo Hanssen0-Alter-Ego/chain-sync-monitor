@@ -106,7 +106,8 @@ export class EmailAlerts {
   }
 
   observe(services: Service[], now = Date.now()) {
-    this.withDb(db => {
+    const events = this.withDb(db => {
+      const queued = [];
       db.exec("BEGIN IMMEDIATE;");
       const read = db.prepare("SELECT incident, bad, good, first_bad FROM email_alert_state WHERE service = ?");
       const save = db.prepare(`
@@ -135,6 +136,7 @@ export class EmailAlerts {
         if (event && incident && firstBad !== null) {
           const { id, subject, text } = mailFor(service, event, incident, firstBad, now, this.config.statusUrl);
           enqueue.run(id, service.id, subject, text, now, now);
+          queued.push({ event, event_id: id, service_id: service.id, state: service.state });
           if (event === "RECOVERED") { incident = null; bad = 0; good = 0; firstBad = null; }
         }
         if (incident !== last.incident || bad !== last.bad || good !== last.good || firstBad !== last.first_bad) {
@@ -143,7 +145,11 @@ export class EmailAlerts {
       }
       db.prepare("DELETE FROM email_alert_outbox WHERE finished < ?").run(now - retention);
       db.exec("COMMIT;");
+      return queued;
     });
+    for (const event of events) {
+      console.info(JSON.stringify({ message: "Monitor incident", ...event }));
+    }
   }
 
   /** Keep network I/O outside the probe loop, with one sender per monitor process. */
@@ -154,21 +160,24 @@ export class EmailAlerts {
   private async drain(now: number) {
     for (let sent = 0; sent < 8; sent++) {
       const entry = this.withDb(db => db.prepare(`
-        SELECT id, subject, text, attempts FROM email_alert_outbox AS candidate
+        SELECT id, service, subject, text, attempts FROM email_alert_outbox AS candidate
         WHERE finished IS NULL AND next_try <= ?
           AND NOT EXISTS (SELECT 1 FROM email_alert_outbox AS prior
             WHERE prior.service = candidate.service AND prior.finished IS NULL AND prior.rowid < candidate.rowid)
         ORDER BY rowid LIMIT 1
-      `).get(now)) as EventRow | undefined;
+      `).get(now)) as (EventRow & { service: string }) | undefined;
       if (!entry) break;
       const result = await this.send(this.config, entry);
+      const delay = retryDelays[entry.attempts];
+      const retry = !result.ok && result.retry && delay !== undefined;
       this.withDb(db => {
-        const delay = retryDelays[entry.attempts];
-        if (!result.ok && result.retry && delay !== undefined) {
+        if (retry) {
           db.prepare("UPDATE email_alert_outbox SET attempts = attempts+1, next_try = ? WHERE id = ?").run(now + delay, entry.id);
         } else db.prepare("UPDATE email_alert_outbox SET finished = ? WHERE id = ?").run(now, entry.id);
-        if (!result.ok) console.error(`Email alert ${entry.id} not accepted: ${result.reason}.`);
       });
+      const log = { message: "Monitor alert email", event_id: entry.id, service_id: entry.service, attempt: entry.attempts + 1 };
+      if (result.ok) console.info(JSON.stringify({ ...log, outcome: "accepted" }));
+      else console.error(JSON.stringify({ ...log, outcome: retry ? "retrying" : "failed", reason: result.reason }));
     }
   }
 }

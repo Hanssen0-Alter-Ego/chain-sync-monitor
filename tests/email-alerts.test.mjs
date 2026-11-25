@@ -80,6 +80,8 @@ test("startup and catch-up are quiet; degraded-but-reachable opens once and rest
 });
 
 test("outbox retains the same event and sends recovery after the retried opening", async t => {
+  const info = t.mock.method(console, "info", () => {});
+  const error = t.mock.method(console, "error", () => {});
   const attempts = [];
   const send = async (_config, mail) => {
     attempts.push(mail);
@@ -97,6 +99,26 @@ test("outbox retains the same event and sends recovery after the retried opening
   assert.equal(attempts.length, 3);
   assert.equal(attempts[0].text, attempts[1].text);
   assert.match(attempts[2].subject, /RECOVERED/);
+  const logs = mock => mock.mock.calls.map(call => JSON.parse(call.arguments[0]));
+  const [open, recovered, acceptedOpen, acceptedRecovery] = logs(info);
+  assert.equal(info.mock.callCount(), 4);
+  assert.equal(error.mock.callCount(), 1);
+  assert.deepEqual([open.event, recovered.event], ["OPEN", "RECOVERED"]);
+  assert.deepEqual([open.state, recovered.state], ["offline", "online"]);
+  assert.deepEqual(logs(error)[0], {
+    message: "Monitor alert email", event_id: open.event_id, service_id: "mainnet-ckbadger",
+    attempt: 1, outcome: "retrying", reason: "HTTP 503",
+  });
+  for (const [incident, sent, attempt] of [[open, acceptedOpen, 2], [recovered, acceptedRecovery, 1]]) {
+    assert.deepEqual(sent, {
+      message: "Monitor alert email", event_id: incident.event_id, service_id: "mainnet-ckbadger",
+      attempt, outcome: "accepted",
+    });
+  }
+  const rawLogs = JSON.stringify([...logs(info), ...logs(error)]);
+  for (const secret of [config.apiToken, config.from, config.to, config.statusUrl, "Probe details"]) {
+    assert.ok(!rawLogs.includes(secret));
+  }
 });
 
 test("email config is opt-in; an enabled config reads the token file without exposing it", t => {
