@@ -16,6 +16,7 @@ export interface Endpoint {
   label: string;
   kind: Kind;
   typeScript?: unknown;
+  bitcoinReference?: Endpoint;
 }
 export interface EmailAlertsConfig {
   accountId: string;
@@ -110,6 +111,14 @@ function credential(source: Record<string, unknown>, key: string, dir: string, l
   }
   return value;
 }
+function bitcoinAuthorization(source: Record<string, unknown>, dir: string, field: string) {
+  const username = credential(source, "username", dir, field);
+  const password = credential(source, "password", dir, field);
+  if ((username === undefined) !== (password === undefined) || username?.includes(":")) {
+    throw new ConfigError(`${field} 的 RPC 用户名与密码必须同时配置且用户名不含冒号。`);
+  }
+  return username === undefined ? undefined : "Basic " + Buffer.from(`${username}:${password}`).toString("base64");
+}
 function emailAlerts(value: unknown, dir: string): EmailAlertsConfig | undefined {
   if (value === undefined) return;
   const field = "alerts.email";
@@ -178,15 +187,18 @@ export function loadConfig(path: string): Config {
         kind, label: labels[kind], url: httpUrl(service.url, field + ".url"),
         publicUrl: service.public_url === undefined ? undefined : httpUrl(service.public_url, field + ".public_url", true),
       };
-      if (kind === "btc") {
-        const username = credential(service, "username", dir, field);
-        const password = credential(service, "password", dir, field);
-        if ((username === undefined) !== (password === undefined) || username?.includes(":")) {
-          throw new ConfigError(`${field} 的 RPC 用户名与密码必须同时配置且用户名不含冒号。`);
+      if (kind === "btc") endpoint.authorization = bitcoinAuthorization(service, dir, field);
+      if (kind === "spv") {
+        endpoint.typeScript = service.type_script;
+        if (service.bitcoin_reference !== undefined) {
+          const name = field + ".bitcoin_reference";
+          const reference = table(service.bitcoin_reference, name);
+          endpoint.bitcoinReference = {
+            kind: "btc", label: labels.btc, url: httpUrl(reference.url, name + ".url"),
+            authorization: bitcoinAuthorization(reference, dir, name),
+          };
         }
-        if (username !== undefined) endpoint.authorization = "Basic " + Buffer.from(`${username}:${password}`).toString("base64");
       }
-      if (kind === "spv") endpoint.typeScript = service.type_script;
       endpoints[net].set(kind, endpoint);
     }
     const probes = network.http ?? [];

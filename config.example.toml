@@ -24,6 +24,14 @@ url = "http://127.0.0.1:8888"
 # hash_type = "type"
 # args = "0x..."
 
+# Optional: compare SPV against a separate, fully synced Bitcoin Core.
+# Without this section the monitor compares against networks.mainnet.btc.
+# Allow only getblockchaininfo and getblockhash for the reference RPC account.
+# [networks.mainnet.spv.bitcoin_reference]
+# url = "http://10.0.0.2:8332"
+# username = "monitor"
+# password_file = "btc-reference.password"
+
 [networks.testnet.ckb]
 url = "http://127.0.0.1:8116"
 

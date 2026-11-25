@@ -28,7 +28,7 @@ docker compose up -d --build
 
 - CKB：已验证高度、已知高度、Indexer；BTC：已验证高度、区块头、IBD。
 - Blockbook：索引高度和同步标记，跟配置的 BTC Core 对比；支持分别配置主网和 Testnet3。
-- SPV：支持 `getSyncStatus` 的服务会显示缓存的 BTC 高度、本地头高度和最近确认的链上客户端高度，附可用的观测时间。缓存不等于独立验证同步。可选填完整实例 `type_script` 通过 CKB Indexer 核验链上高度；配置的 Bitcoin Core 高度优先。旧版证明 RPC 仍可用。
+- SPV：支持 `getSyncStatus` 的服务会显示缓存的 BTC 高度、本地头高度和最近确认的链上客户端高度，附可用的观测时间。缓存不等于独立验证同步。可选填完整实例 `type_script` 通过 CKB Indexer 核验链上高度；配置的 Bitcoin Core 高度优先。旧版证明 RPC 仍可用。 可配 `networks.<网络>.spv.bitcoin_reference` 指向独立、已完成同步的 Bitcoin Core（`url`、可选 RPC 凭据，支持 `password_file`）；未配置时沿用同网 `btc`，只表示与该节点一致，不证明独立性。启用链上实例检查时按同一高度核验 tip hash；RPC 不可用、网络不符或参考节点未追平时显示暂不可比。连续两轮出现同一分歧才记为异常，并走现有邮件告警门槛；RPC 可达性历史不变。参考节点只需允许 `getblockchaininfo` 和 `getblockhash`。
 - CKBadger：双网部署分别用 `/api/mainnet/v1/statistics/network` 与 `/api/testnet/v1/statistics/network`；单网独立部署用 `/api/v1/statistics/network`。
 - DOB Decoder：通过 JSON-RPC POST 调用无参数的 `dob_protocol_version`，显示协议版本并记录可用率；不解码资产，也不检查链同步。配置为 `[networks.mainnet.dob_decoder]` 或 `[networks.testnet.dob_decoder]`，URL 示例见 [config.example.toml](config.example.toml)。
 

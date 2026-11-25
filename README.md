@@ -86,3 +86,10 @@ Built-in GitHub icons link to upstream repositories. Set `github_url = "https://
 If Bitcoin RPC does not permit `getindexinfo`, index status is unavailable but chain polling continues.
 
 The dashboard shows the last 24 hours as 12 two-hour probe buckets, oldest first. Equal-size cells fill from the bottom in exact proportion to successful probes. The fill color blends continuously from green through amber to pink as the share of successful probes falls; it does not mark discrete thresholds. An empty cell with a solid pink outline means all probes failed (0%); a dotted gray outline means no samples, not downtime. Open Interval Breakdown for the sample counts. The percentage still uses individual recorded checks. Older backends show only the percentage until upgraded.
+
+
+### SPV block hash consistency
+
+With an SPV `type_script` and CKB endpoint configured, the monitor compares the active on-chain client's tip hash to Bitcoin Core at the **same height** (using `getblockhash` when needed). Use `networks.<network>.spv.bitcoin_reference` to specify a separately operated, fully synced Bitcoin Core; it accepts `url` and the same optional username/password sources as the normal Bitcoin endpoint. With no separate reference, it uses the network's configured `btc` endpoint, which does not establish independence. A configured independent reference never silently falls back. Allow `getblockchaininfo` and `getblockhash` for the reference account.
+
+A missing comparable observation is unknown, not a disagreement. Two consecutive polls of the same hash disagreement mark SPV degraded and use the usual configured email failure threshold. A match clears the comparison failure; availability history continues to describe RPC reachability. This is read-only monitoring, not a check enforced by the SPV contract or signer.

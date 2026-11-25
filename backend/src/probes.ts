@@ -26,6 +26,14 @@ export interface Observation {
 }
 export type BaseProbe = Observation | { book: Record<string, unknown>; backend: Record<string, unknown>; available: boolean };
 
+function bitcoinTip(info: Record<string, unknown> | undefined): BitcoinTip | undefined {
+  const height = nat(info?.blocks), headers = nat(info?.headers), ibd = info?.initialblockdownload;
+  if (height === undefined || headers === undefined || height > headers || typeof ibd !== "boolean") return;
+  const value = info?.bestblockhash;
+  const hash = typeof value === "string" && btcHash.test(value) ? value.toLowerCase() : undefined;
+  return { height, headers, hash, synced: !ibd && headers === height };
+}
+
 async function readBitcoinIndexes(endpoint: Endpoint, timeout: number): Promise<BitcoinIndexes> {
   // getindexinfo only lists running indexes. Errors (e.g. unavailable method or
   // RPC allowlist) don't establish whether any index is enabled.
@@ -57,19 +65,15 @@ async function bitcoin(network: Network, endpoint: Endpoint, timeout: number): P
   if (!btcChains[network].includes(info.chain)) {
     return { reading: reading("degraded", [], "Bitcoin Core 返回的网络与配置不符。"), available: false };
   }
-  const height = nat(info.blocks), headers = nat(info.headers), ibd = info.initialblockdownload;
-  if (height === undefined || headers === undefined || height > headers || typeof ibd !== "boolean") {
-    throw new ProbeError("Bitcoin Core 未返回有效的区块高度、头高度或 IBD 状态。");
-  }
-  const hash = typeof info.bestblockhash === "string" && btcHash.test(info.bestblockhash)
-    ? info.bestblockhash.toLowerCase() : undefined;
+  const tip = bitcoinTip(info);
+  if (!tip) throw new ProbeError("Bitcoin Core 未返回有效的区块高度、头高度或 IBD 状态。");
+  const { height, headers, synced } = tip;
   const rows = [metric("已验证区块高度", height), metric("区块头高度", headers), metric("落后区块头", headers - height, "块")];
   const stamp = new Date((nat(info.time) ?? 0) * 1000);
   if (stamp.getTime()) rows.push(metric("最新区块时间", stamp.toISOString()));
-  const synced = !ibd && headers === height;
   const bitcoinIndexes = await readBitcoinIndexes(endpoint, timeout - (performance.now() - start) / 1000);
   const indexLags = Object.values(bitcoinIndexes).flatMap(index => index.state === "syncing" ? [headers - index.height] : []);
-  const syncTipLag = !ibd && !Object.values(bitcoinIndexes).some(index =>
+  const syncTipLag = !info.initialblockdownload && !Object.values(bitcoinIndexes).some(index =>
     index.state === "unavailable" || index.state === "syncing" && index.height > height)
     ? Math.max(headers - height, ...indexLags) : undefined;
   return {
@@ -78,7 +82,7 @@ async function bitcoin(network: Network, endpoint: Endpoint, timeout: number): P
         "按本节点所见的区块头判断，不代表已核对外部网络高度。", fraction(info.verificationprogress)),
       bitcoinIndexes, syncTipLag,
     },
-    available: true, tip: { height, headers, hash, synced },
+    available: true, tip,
   };
 }
 async function ckb(endpoint: Endpoint, timeout: number): Promise<Observation> {
@@ -255,8 +259,18 @@ export function mergeSpvStatus(live: Reading, status: SpvStatus | undefined, btc
   }
   return { ...live, metrics };
 }
-export async function inspectOnchain(scriptValue: unknown, ckb: Endpoint | undefined, btc: BitcoinTip | undefined,
-  timeout: number, live: Reading, hasLocal = false): Promise<Reading> {
+export async function inspectOnchain(
+  network: Network, endpoint: Endpoint, ckb: Endpoint | undefined, bitcoin: Endpoint | undefined,
+  btc: BitcoinTip | undefined, timeout: number, live: Reading, hasLocal: boolean,
+  confirmMismatch: (fingerprint: string) => boolean,
+): Promise<Reading> {
+  const scriptValue = endpoint.typeScript;
+  const deadline = performance.now() + timeout * 1000;
+  const remaining = () => {
+    const seconds = (deadline - performance.now()) / 1000;
+    if (seconds <= 0) throw new ProbeError("上游请求超时。", "offline");
+    return seconds;
+  };
   if (scriptValue === undefined) return { ...live, note: "RPC 在线；配置 type_script 可查看链上 SPV 高度。" };
   if (!ckb) return { ...live, note: "RPC 在线；请配置 CKB 端点以核对链上 SPV 高度。" };
   const script = record(scriptValue);
@@ -273,29 +287,59 @@ export async function inspectOnchain(scriptValue: unknown, ckb: Endpoint | undef
     ]));
     if (!Array.isArray(page?.objects) || page.objects.length > 256) throw new ProbeError("链上 SPV 查询未返回有效结果。");
     const ids: number[] = [];
-    const clients = new Map<number, [number, number]>();
+    const clients = new Map<number, { first: number; tip: number; hash: string }>();
     for (const object of page.objects as unknown[]) {
       const data = record(object)?.output_data;
       if (typeof data !== "string" || !/^0x(?:[0-9a-f]{2})+$/i.test(data)) throw new ProbeError("链上 SPV Cell 格式无效。");
       const bytes = Buffer.from(data.slice(2), "hex");
       if (bytes.length === 1) ids.push(bytes[0]);
-      else if (bytes.length === 113 && !clients.has(bytes[0])) clients.set(bytes[0], [bytes.readUInt32LE(33), bytes.readUInt32LE(37)]);
+      else if (bytes.length === 113 && !clients.has(bytes[0])) clients.set(bytes[0], {
+        first: bytes.readUInt32LE(33), tip: bytes.readUInt32LE(37),
+        // The packed Bitcoin block hash is in internal byte order, unlike Core's RPC hex.
+        hash: Buffer.from(bytes.subarray(1, 33)).reverse().toString("hex"),
+      });
       else throw new ProbeError("出现未知或重复的 SPV Cell。");
     }
     const active = clients.get(ids[0]);
-    if (ids.length !== 1 || clients.size !== parseInt(args.slice(66, 68), 16) || !active || active[0] > active[1]) {
+    if (ids.length !== 1 || clients.size !== parseInt(args.slice(66, 68), 16) || !active || active.first > active.tip) {
       throw new ProbeError("SPV 实例在 CKB 索引器中尚未完整可见。");
     }
-    const [first, tip] = active;
+    const { first, tip, hash } = active;
     const metrics = [...live.metrics, metric("链上 SPV 高度", tip), metric("起始 BTC 高度", first), metric("SPV 客户端数", clients.size)];
+    const reference = endpoint.bitcoinReference ?? bitcoin;
+    let observed = btc;
+    let coreHash: string | undefined;
+    try {
+      if (endpoint.bitcoinReference) {
+        const info = record(await rpc(endpoint.bitcoinReference, remaining(), "getblockchaininfo", [], true));
+        observed = typeof info?.chain === "string" && btcChains[network].includes(info.chain) ? bitcoinTip(info) : undefined;
+      }
+      if (observed?.synced && observed.height >= tip && reference) {
+        const value = observed.height === tip && observed.hash !== undefined
+          ? observed.hash : await rpc(reference, remaining(), "getblockhash", [tip], true);
+        if (typeof value === "string" && btcHash.test(value)) coreHash = value.toLowerCase();
+      }
+    } catch { /* A missing or invalid reference observation is not a disagreement. */ }
+
+    const compare = (value: string) => metrics.push(metric("SPV 区块哈希校验", value));
     const note = hasLocal ? undefined : "SPV RPC 未提供本地缓存高度。";
-    if (!btc || btc.height < tip) return reading("unknown", metrics, note ? note + " 暂无可比对的 BTC 高度。" : "暂无可比对的 BTC 高度。");
-    const lag = btc.height - tip;
-    metrics.push(metric("本地 BTC 高度", btc.height), metric("SPV 落后", lag, "块"));
+    const lag = observed && observed.height >= tip ? observed.height - tip : undefined;
+    if (observed) metrics.push(metric(endpoint.bitcoinReference ? "参考 BTC 高度" : "本地 BTC 高度", observed.height));
+    if (lag !== undefined) metrics.push(metric("SPV 落后", lag, "块"));
+    if (!coreHash || !observed || lag === undefined) {
+      compare("暂不可比");
+      return reading("unknown", metrics, note);
+    }
+    if (coreHash !== hash) {
+      const confirmed = confirmMismatch(`${tip}:${hash}:${coreHash}`);
+      compare(confirmed ? "确认分歧" : "等待复查");
+      return reading(confirmed ? "degraded" : "unknown", metrics);
+    }
+    compare("一致");
     return {
-      ...reading(lag ? "syncing" : btc.synced ? "synced" : "unknown", metrics, note,
-        btc.height > first ? (tip - first) / (btc.height - first) : undefined),
-      syncTipLag: btc.synced ? lag : undefined,
+      ...reading(lag ? "syncing" : "synced", metrics, note,
+        observed.height > first ? (tip - first) / (observed.height - first) : undefined),
+      syncTipLag: lag,
     };
   } catch (error) {
     return { ...live, state: "degraded", note: "RPC 在线；链上检查未成功。" + (error instanceof ProbeError ? error.note : "") };

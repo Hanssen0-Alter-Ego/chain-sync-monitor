@@ -131,7 +131,7 @@ test("separate frontend status API, all probes, CORS and no implicit RPC/config 
       assert.equal(req.headers.authorization, "Basic " + Buffer.from("watcher:SAMPLE_ONLY_PASSWORD").toString("base64"));
       return json(res, reply({
         chain: req.url.startsWith("/main") ? "main" : "test", blocks: 100, headers: 100,
-        initialblockdownload: false, verificationprogress: 1,
+        initialblockdownload: false, verificationprogress: 1, bestblockhash: "0".repeat(64),
       }));
     }
     if (args.method === "getindexinfo") {
@@ -392,6 +392,7 @@ test("SPV cache, direct Core tip and optional CKB verification keep distinct obs
     if (method==="getSyncStatus") return json(res,cache ? reply(cache) : missing);
     if (method==="get_cells") return json(res,reply({objects:[{output_data:"0x07"},{output_data:"0x"+cell.toString("hex")}]}));
     if (method==="getblockchaininfo") return json(res,reply({chain:"main",blocks:120,headers:120,initialblockdownload:false}));
+    if (method==="getblockhash") return json(res,reply("0".repeat(64)));
     return json(res,missing);
   }));
   const path=join(directory(t),"config.toml");
@@ -593,4 +594,101 @@ test("CKBadger warm-up does not mark the service available; wrong BTC network is
   const btc = await probe("testnet3", { kind: "btc", label: "BTC", url: base }, 1);
   assert.equal(btc.reading.state, "degraded");
   assert.equal(btc.available, false);
+});
+
+test("SPV checks a configured independent reference at the exact CKB client height", async t => {
+  const height = 977560;
+  const accepted = "0000000000000000000129e025b9ebc6269a1ca4fd7532b7e1ca4fce876ad30a";
+  const competing = "ab".repeat(32);
+  const cell = Buffer.alloc(113);
+  cell[0] = 27;
+  Buffer.from(accepted, "hex").reverse().copy(cell, 1);
+  cell.writeUInt32LE(975744, 33);
+  cell.writeUInt32LE(height, 37);
+  let referenceHeight = height;
+  let referenceTipHash = accepted.toUpperCase();
+  let historical = accepted;
+  let referenceChain = "main";
+  let referenceIbd = false;
+  let referenceRequests = [];
+  const upstream = await listen(t, createServer(async (req, res) => {
+    const { method, params } = await payload(req);
+    if (method === "get_cells") return json(res, reply({ objects: [
+      { output_data: "0x1b" }, { output_data: "0x" + cell.toString("hex") },
+    ] }));
+    if (method === "getTxProof") return json(res, badRequest);
+    if (req.url === "/reference") {
+      assert.equal(req.headers.authorization, "Basic " + Buffer.from("reference-user:REFERENCE_ONLY").toString("base64"));
+      referenceRequests.push([method, params]);
+      if (method === "getblockchaininfo") return json(res, reply({
+        chain: referenceChain, blocks: referenceHeight, headers: referenceHeight, initialblockdownload: referenceIbd,
+        bestblockhash: referenceTipHash,
+      }));
+      if (method === "getblockhash") return json(res, reply(historical));
+    }
+    if (method === "getblockchaininfo") return json(res, reply({
+      chain: "main", blocks: height, headers: height, initialblockdownload: false, bestblockhash: accepted,
+    }));
+    return json(res, {...badRequest, error: {code: -32601}});
+  }));
+  const path = join(directory(t), "config.toml");
+  writeFileSync(path, `
+[networks.mainnet.spv]
+url="${upstream}/spv"
+[networks.mainnet.spv.type_script]
+code_hash="0x${"ab".repeat(32)}"
+hash_type="type"
+args="0x${"cd".repeat(32)}0100"
+[networks.mainnet.spv.bitcoin_reference]
+url="${upstream}/reference"
+username="reference-user"
+password="REFERENCE_ONLY"
+[networks.mainnet.ckb]
+url="${upstream}/ckb"
+[networks.mainnet.btc]
+url="${upstream}/btc"
+`);
+  const cfg = loadConfig(path);
+  const monitor = new Monitor(cfg, new HistoryStore(cfg.historyPath));
+  const base = await listen(t, makeServer(cfg, () => monitor.snapshot));
+  async function poll(state, comparison) {
+    referenceRequests = [];
+    await monitor.poll();
+    const raw = await (await fetch(base + "/api/status")).text();
+    for (const secret of ["REFERENCE_ONLY", "reference-user", upstream, accepted, competing]) assert.ok(!raw.includes(secret));
+    const svc = JSON.parse(raw).services.find(s => s.id === "mainnet-spv");
+    assert.equal(svc.state, state);
+    assert.equal(svc.metrics.find(m => m.label === "SPV 区块哈希校验")?.value, comparison);
+    assert.equal(svc.probeAvailable, true, "a hash mismatch is not an RPC outage");
+    return svc;
+  }
+  await poll("synced", "一致");
+  assert.deepEqual(referenceRequests, [["getblockchaininfo", []]]);
+  referenceTipHash = competing;
+  await poll("unknown", "等待复查");
+  referenceTipHash = accepted;
+  await poll("synced", "一致");
+  referenceTipHash = competing;
+  await poll("unknown", "等待复查");
+  await poll("degraded", "确认分歧");
+  referenceHeight++;
+  const svc = await poll("syncing", "一致");
+  assert.deepEqual(referenceRequests, [["getblockchaininfo", []], ["getblockhash", [height]]]);
+  assert.equal(svc.syncTipLag, 1);
+  historical = "invalid";
+  await poll("unknown", "暂不可比");
+  historical = competing;
+  await poll("unknown", "等待复查");
+  referenceChain = "test";
+  await poll("unknown", "暂不可比");
+  assert.deepEqual(referenceRequests, [["getblockchaininfo", []]]);
+  referenceChain = "main";
+  referenceIbd = true;
+  await poll("unknown", "暂不可比");
+  referenceIbd = false;
+  referenceHeight = height - 1;
+  await poll("unknown", "暂不可比");
+  assert.deepEqual(referenceRequests, [["getblockchaininfo", []]]);
+  referenceHeight = height;
+  await poll("unknown", "等待复查");
 });

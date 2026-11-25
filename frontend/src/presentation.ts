@@ -145,7 +145,8 @@ export function syncComparisons(service: Service): Comparison[] {
       const chain = height(service, "链上 SPV 高度") ?? height(service, "SPV 缓存的链上高度");
       const core = height(service, "本地 BTC 高度", "BTC Core 高度") ?? height(service, "SPV 观测的 BTC 高度");
       const local = height(service, "本地 SPV 高度");
-      return local ? [...(chain ? compare(chain, local, "上链落后") : []), ...compare(local, core, "头同步落后")] : compare(chain, core);
+      const reference = height(service, "参考 BTC 高度") ?? core;
+      return local ? [...(chain ? compare(chain, local, "上链落后") : []), ...compare(local, core ?? reference, "头同步落后")] : compare(chain, reference);
     }
     default: return [];
   }

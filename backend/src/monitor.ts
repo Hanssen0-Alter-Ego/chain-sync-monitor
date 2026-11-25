@@ -18,6 +18,7 @@ async function parallel<T, R>(items: T[], limit: number, fn: (item: T) => Promis
 export class Monitor {
   snapshot: Snapshot;
   private readonly probes;
+  private spvMismatches = new Map<Network, string>();
   private bookHeights = new Map<Network, { height: number; since: number }>();
   private history: Record<string, Availability> = {};
   private error?: string;
@@ -72,9 +73,15 @@ export class Monitor {
       if (endpoint.kind === "spv") {
         const status = result.spvStatus;
         let live = result.reading;
+        const previousMismatch = this.spvMismatches.get(network);
+        this.spvMismatches.delete(network);
         if (result.available && live.state === "unknown" && (endpoint.typeScript !== undefined || !status)) {
-          live = await inspectOnchain(endpoint.typeScript, this.config.endpoints[network].get("ckb"), btc,
-            this.config.timeoutSeconds, live, status?.local !== undefined);
+          const endpoints = this.config.endpoints[network];
+          live = await inspectOnchain(network, endpoint, endpoints.get("ckb"), endpoints.get("btc"), btc,
+            this.config.timeoutSeconds, live, status?.local !== undefined, fingerprint => {
+              this.spvMismatches.set(network, fingerprint);
+              return previousMismatch === fingerprint;
+            });
         } else if (result.available && status) {
           live = { ...live, note: "SPV 高度来自服务缓存的观测，不代表已独立核实同步。" };
         }
