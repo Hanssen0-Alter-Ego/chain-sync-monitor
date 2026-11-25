@@ -33,6 +33,33 @@ docker compose up -d --build
 - DOB Decoder：通过 JSON-RPC POST 调用无参数的 `dob_protocol_version`，显示协议版本并记录可用率；不解码资产，也不检查链同步。配置为 `[networks.mainnet.dob_decoder]` 或 `[networks.testnet.dob_decoder]`，URL 示例见 [config.example.toml](config.example.toml)。
 
 测试网服务推荐配置在 `[networks.testnet.*]` 下。BTC 节点的网络由配置 URL 对应的节点决定，此标签不切换链，也不改变探针支持的网络。`[networks.testnet3.*]` 是兼容旧配置的别名，两种写法不能混用。修改表名不会改变状态 API 的服务 ID，也不会重置可用率历史。
+
+### 自定义展示分组
+
+主网／测试网显示在每张卡片「在线」左边。可以用 `[groups.<名称>]`
+自由命名分组，并在 `[[groups.<名称>.services]]` 逐项设置服务；同一组可以混放主网、测试网及普通应用：
+
+```toml
+[groups.infrastructure]
+label = "基础设施"
+
+[[groups.infrastructure.services]]
+kind = "ckb"
+network = "mainnet"
+url = "http://127.0.0.1:8114"
+
+[[groups.infrastructure.services]]
+kind = "http"
+id = "portal"
+label = "门户"
+url = "https://portal.example.com/health"
+```
+
+链探针用 `network = "mainnet"` 或 `"testnet"`，HTTP 与 DOB Decoder 可省略
+`network`，不显示网络标签。分组的 `label` 省略时用分组名本身。
+旧 `[networks.*]` 仍可用；未另分组的服务统一显示在「服务」下。
+迁移时删掉旧定义，保留原网络、探针类型和 HTTP 的 `id`，历史和告警 ID
+便不会变。实际改变或去掉网络会使用新服务 ID。
 - BTC Asset API 等 HTTP 服务：按 2xx 判断可用，不跟随重定向，不显示链同步进度。
 
 24 小时、7 天可用率按实际探测样本计算；同步中不等于不可用，监控停机也不算节点停机。24 小时小条从左到右每格两小时，等宽等高；自下而上按探测成功率填充。填充颜色随成功率下降从绿经琥珀色连续过渡到粉色，没有切换阈值。全失败（0%）显示粉色实线空框，未采样显示灰色点线空框，不计为节点停机。可展开分时明细核对探测次数。升级时可保留原 TOML 与 Compose 的 `monitor-history` 卷（SQLite 格式不变），不要让旧、新两个监控进程同时写同一个库。

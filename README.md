@@ -59,6 +59,37 @@ Copy the block from [Caddyfile.example](Caddyfile.example) into your host's Cadd
 
 Use `[networks.testnet.*]` for testnet services. The Bitcoin network depends on the node behind the configured URL; this label does not select a chain or extend supported probe networks. `[networks.testnet3.*]` is a legacy alias: choose one spelling for all testnet services. Switching the table names does not change status API IDs or reset uptime history.
 
+### Optional display groups
+
+Each card shows Mainnet or Testnet directly to the left of its availability
+status. Set your own group name using `[groups.<name>]` and put each
+probe under `[[groups.<name>.services]]`. A group can mix networks or include
+services that do not belong to a chain:
+
+```toml
+[groups.infrastructure]
+label = "Infrastructure"
+
+[[groups.infrastructure.services]]
+kind = "ckb"
+network = "mainnet"
+url = "http://127.0.0.1:8114"
+
+[[groups.infrastructure.services]]
+kind = "http"
+id = "portal"
+label = "Portal"
+url = "https://portal.example.com/health"
+```
+
+Use `network = "mainnet"` or `"testnet"` for chain probes; HTTP and DOB
+Decoder can omit it and show no network badge. `label` on the group is
+optional and defaults to its key. The existing `[networks.*]` configuration
+still works and its ungrouped cards appear under Services. When moving an
+existing entry, remove its old definition. Keeping the network, kind, and
+HTTP `id` preserves its uptime history and alert ID. Changing the network
+(including removing it) gives the service a new ID.
+
 Generic HTTP checks use a configured GET URL and count 2xx as available without following redirects. BTC Asset API's `/healthcheck` measures dependency and worker health, not sync progress or SPV proof validity. Mainnet Blockbook is optional and configured the same way as the testnet instance.
 
 ## Availability history

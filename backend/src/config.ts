@@ -1,7 +1,7 @@
 import { closeSync, openSync, readFileSync, readSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { parse } from "smol-toml";
-import { networks, type Network, type Kind } from "../../shared/status.js";
+import { networks, type Network, type Kind, type ServiceGroup } from "../../shared/status.js";
 
 export const labels: Record<Exclude<Kind, "http">, string> = {
   btc: "Bitcoin Core", ckb: "CKB 节点与索引器", blockbook: "Blockbook",
@@ -15,6 +15,7 @@ export interface Endpoint {
   authorization?: string;
   label: string;
   kind: Kind;
+  group?: ServiceGroup;
   typeScript?: unknown;
   bitcoinReference?: Endpoint;
 }
@@ -30,6 +31,7 @@ export interface EmailAlertsConfig {
 
 export interface Config {
   endpoints: Record<Network, Map<string, Endpoint>>;
+  unscoped: Map<string, Endpoint>;
   host: string;
   port: number;
   intervalSeconds: number;
@@ -164,6 +166,7 @@ export function loadConfig(path: string): Config {
     throw new ConfigError("monitor.cors_netlify_site 必须是小写 Netlify 站点名，不含域名或路径。");
   }
   const endpoints: Config["endpoints"] = { mainnet: new Map(), testnet3: new Map() };
+  const unscoped = new Map<string, Endpoint>();
   const configured = table(raw.networks ?? {}, "networks");
   if (Object.keys(configured).some((net) => net !== "testnet" && !Object.hasOwn(endpoints, net))) {
     throw new ConfigError("网络名称仅支持 mainnet 和 testnet（旧写法 testnet3 仍可用）。");
@@ -171,57 +174,91 @@ export function loadConfig(path: string): Config {
   if (Object.hasOwn(configured, "testnet") && Object.hasOwn(configured, "testnet3")) {
     throw new ConfigError("networks.testnet 和 networks.testnet3 不能同时配置；请将测试网服务统一放到 networks.testnet。");
   }
+  function displayLabel(value: unknown, field: string) {
+    if (typeof value !== "string" || !value.trim() || value.trim().length > 80 || /[\x00-\x1f\x7f]/.test(value)) {
+      throw new ConfigError(`${field} 无效。`);
+    }
+    return value.trim();
+  }
+  function add(service: Record<string, unknown>, kind: Kind, field: string, network?: Network, group?: ServiceGroup) {
+    const target = network ? endpoints[network] : unscoped;
+    let key: string = kind;
+    if (kind === "http") {
+      const { id } = service;
+      if (typeof id !== "string" || !/^[a-z0-9][a-z0-9-]{0,39}$/.test(id)) {
+        throw new ConfigError(`${field}.id 无效或重复。`);
+      }
+      key = "http:" + id;
+      if ([...target.values()].filter(probe => probe.kind === "http").length >= 8) {
+        throw new ConfigError(`${field} 的网络范围最多允许 8 个 HTTP 探针。`);
+      }
+    }
+    if (target.has(key)) throw new ConfigError(`${field} 的服务 ID 或探针类型在同一网络范围内重复。`);
+    const endpoint: Endpoint = {
+      kind, group, label: kind === "http" ? displayLabel(service.label, field + ".label") : labels[kind],
+      url: httpUrl(service.url, field + ".url"),
+      publicUrl: service.public_url === undefined ? undefined : httpUrl(service.public_url, field + ".public_url", true),
+      githubUrl: service.github_url === undefined ? undefined : githubRepository(service.github_url, field + ".github_url"),
+    };
+    if (kind === "btc") endpoint.authorization = bitcoinAuthorization(service, dir, field);
+    if (kind === "spv") {
+      endpoint.typeScript = service.type_script;
+      if (service.bitcoin_reference !== undefined) {
+        const name = field + ".bitcoin_reference";
+        const reference = table(service.bitcoin_reference, name);
+        endpoint.bitcoinReference = {
+          kind: "btc", label: labels.btc, url: httpUrl(reference.url, name + ".url"),
+          authorization: bitcoinAuthorization(reference, dir, name),
+        };
+      }
+    }
+    target.set(key, endpoint);
+  }
+  function knownKind(kind: unknown): kind is Kind {
+    return typeof kind === "string" && (kind === "http" || Object.hasOwn(labels, kind));
+  }
   for (const net of networks) {
-    // Keep API and uptime IDs stable even when the preferred config spelling is used.
+    // Keep API and uptime IDs stable even when moving a service into a named group.
     const key = net === "testnet3" && Object.hasOwn(configured, "testnet") ? "testnet" : net;
     const fieldPrefix = `networks.${key}`;
     const network = table(configured[key] ?? {}, fieldPrefix);
-    for (const kind of Object.keys(network)) {
-      if (kind !== "http" && !Object.hasOwn(labels, kind)) throw new ConfigError(`${fieldPrefix} 包含不支持的服务。`);
-    }
+    if (Object.keys(network).some(kind => !knownKind(kind))) throw new ConfigError(`${fieldPrefix} 包含不支持的服务。`);
     for (const kind of Object.keys(labels) as (keyof typeof labels)[]) {
-      if (!Object.hasOwn(network, kind)) continue;
-      const field = `${fieldPrefix}.${kind}`;
-      const service = table(network[kind], field);
-      const endpoint: Endpoint = {
-        kind, label: labels[kind], url: httpUrl(service.url, field + ".url"),
-        publicUrl: service.public_url === undefined ? undefined : httpUrl(service.public_url, field + ".public_url", true),
-      };
-      if (kind === "btc") endpoint.authorization = bitcoinAuthorization(service, dir, field);
-      if (kind === "spv") {
-        endpoint.typeScript = service.type_script;
-        if (service.bitcoin_reference !== undefined) {
-          const name = field + ".bitcoin_reference";
-          const reference = table(service.bitcoin_reference, name);
-          endpoint.bitcoinReference = {
-            kind: "btc", label: labels.btc, url: httpUrl(reference.url, name + ".url"),
-            authorization: bitcoinAuthorization(reference, dir, name),
-          };
-        }
+      if (Object.hasOwn(network, kind)) {
+        const field = `${fieldPrefix}.${kind}`;
+        add(table(network[kind], field), kind, field, net);
       }
-      endpoints[net].set(kind, endpoint);
     }
     const probes = network.http ?? [];
     if (!Array.isArray(probes) || probes.length > 8) throw new ConfigError(`${fieldPrefix}.http 必须是数组，每个网络最多 8 项。`);
     for (const probe of probes as unknown[]) {
       const field = `${fieldPrefix}.http`;
-      const service = table(probe, field);
-      const { id, label } = service;
-      if (typeof id !== "string" || !/^[a-z0-9][a-z0-9-]{0,39}$/.test(id) || endpoints[net].has("http:" + id)) {
-        throw new ConfigError(`${field}.id 无效或重复。`);
+      add(table(probe, field), "http", field, net);
+    }
+  }
+  for (const [id, value] of Object.entries(table(raw.groups ?? {}, "groups"))) {
+    const field = `groups.${id}`;
+    const opts = table(value, field);
+    const group = { id: displayLabel(id, field), label: displayLabel(opts.label ?? id, field + ".label") };
+    if (group.id !== id) throw new ConfigError(`${field} 的分组名不能以空白开头或结尾。`);
+    const services = opts.services ?? [];
+    if (!Array.isArray(services)) throw new ConfigError(`${field}.services 必须是数组。`);
+    for (const [index, value] of services.entries()) {
+      const name = `${field}.services[${index}]`;
+      const service = table(value, name);
+      const { kind, network } = service;
+      if (!knownKind(kind)) throw new ConfigError(`${name}.kind 不是支持的探针。`);
+      if (network === undefined && kind !== "http" && kind !== "dob_decoder") {
+        throw new ConfigError(`${name}.network 必须为 mainnet 或 testnet。`);
       }
-      if (typeof label !== "string" || !label.trim() || label.trim().length > 80 || /[\x00-\x1f]/.test(label)) {
-        throw new ConfigError(`${field}.label 无效。`);
+      if (network !== undefined && network !== "mainnet" && network !== "testnet" && network !== "testnet3") {
+        throw new ConfigError(`${name}.network 必须为 mainnet 或 testnet。`);
       }
-      endpoints[net].set("http:" + id, {
-        kind: "http", label: label.trim(), url: httpUrl(service.url, field + ".url"),
-        publicUrl: service.public_url === undefined ? undefined : httpUrl(service.public_url, field + ".public_url", true),
-        githubUrl: service.github_url === undefined ? undefined : githubRepository(service.github_url, field + ".github_url"),
-      });
+      add(service, kind, name, network === "testnet" ? "testnet3" : network, group);
     }
   }
   return {
-    endpoints, corsOrigins, corsNetlifySite, emailAlerts: emailAlerts(table(raw.alerts ?? {}, "alerts").email, dir), historyPath: resolve(dir, historyPath),
+    endpoints, unscoped, corsOrigins, corsNetlifySite, emailAlerts: emailAlerts(table(raw.alerts ?? {}, "alerts").email, dir), historyPath: resolve(dir, historyPath),
     host: listenHost(opts.host ?? "127.0.0.1"), port: listenPort(opts.port ?? 8080),
     intervalSeconds: number(opts.interval_seconds ?? 30, 1, 3600, "monitor.interval_seconds"),
     timeoutSeconds: number(opts.timeout_seconds ?? 5, 0.1, 60, "monitor.timeout_seconds"),

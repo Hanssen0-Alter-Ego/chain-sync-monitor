@@ -274,25 +274,25 @@ test("built dashboard prioritizes both networks and preserves expanded rows acro
     const rows = id => section(id).querySelector(".cards").children;
     const ids = id => rows(id).map(row => row.dataset.renderKey).filter(Boolean);
     const card = index => container.querySelectorAll("article[data-render-key]").find(row => row.dataset.renderKey === serviceIds[index]);
-    assert.deepEqual(container.children.map(row => row.dataset.network), ["attention", "mainnet", "testnet3"]);
+    assert.deepEqual(container.children.map(row => row.dataset.network), ["attention", "services"]);
     assert.equal(section("attention").querySelector("h2").textContent, "Needs attention");
     assert.deepEqual(ids("attention"), ["btc", "testnet3-http:other", "blockbook", "spv", "ckbadger"]);
-    assert.deepEqual(ids("mainnet"), ["ckb"]);
-    assert.deepEqual(ids("testnet3"), ["testnet3-http:btc-asset-api"]);
+    assert.deepEqual(ids("services"), ["ckb", "testnet3-http:btc-asset-api"]);
     assert.equal(card(0).querySelector(".card-network").textContent, "Mainnet");
     assert.equal(card(6).querySelector(".card-network").textContent, "Testnet");
-    assert.equal(card(1).querySelector(".card-network").hidden, true);
-    assert.equal(section("mainnet").querySelector(".network-summary").textContent, "4 / 5 online");
+    assert.equal(card(1).querySelector(".card-network").textContent, "Mainnet");
+    assert.equal(section("services").querySelector(".network-summary").textContent, "5 / 7 online");
     assert.equal(card(3).querySelector(".probe-state").querySelector(".state-label").textContent, "Online");
     assert.equal(card(3).querySelector(".sync-state").querySelector(".state-label").textContent, "Sync not verified");
     assert.equal(card(1).querySelector(".sync-state").dataset.state, "synced");
     assert.equal(card(2).querySelector(".sync-state").dataset.state, "syncing");
     const template = readFileSync(new URL("../dist/web/index.html", import.meta.url), "utf8");
-    assert.match(readFileSync(new URL("../dist/web/style.css", import.meta.url), "utf8"), /\.network\[data-network="mainnet"\] h2 \{ color: var\(--error\); \}/);
+    assert.match(readFileSync(new URL("../dist/web/style.css", import.meta.url), "utf8"), /\.card-network\[data-chain="mainnet"\] \{ color: var\(--error\); \}/);
     assert.doesNotMatch(template, /class="(?:network-code|eyebrow)"/);
     assert.match(template, /<details class="service-details">[\s\S]*?<meter[\s\S]*?<\/details>/);
     const strips = index => card(index).querySelector(".sync-comparisons").children;
-    assert.equal(section("mainnet").querySelector("h2").textContent, "Mainnet");
+    assert.equal(section("services").querySelector("h2").textContent, "Services");
+    assert.match(template, /class="service-states">\s*<span class="state card-network" hidden><\/span>\s*<span class="state probe-state"/);
     assert.equal(card(2).querySelector(".github-link").href, "https://github.com/trezor/blockbook");
     assert.equal(strips(1)[0].children[1].children[0].attrs["aria-valuetext"], "99.99%");
     assert.equal(strips(1)[1].children[1].children[0].attrs["aria-valuetext"], "100%");
@@ -340,7 +340,7 @@ test("built dashboard prioritizes both networks and preserves expanded rows acro
     assert.equal(card(0).querySelector(".service-uptime-value").textContent, "0%");
     assert.equal(card(3).querySelector(".service-uptime-value").textContent, "No samples");
     assert.match(card(2).querySelector(".service-details").querySelector("summary").attrs["aria-label"], /24-hour uptime 75%/);
-    assert.equal(section("testnet3").querySelector("h2").textContent, "Testnet");
+    assert.equal(card(5).querySelector(".card-network").textContent, "Testnet");
     assert.equal(card(5).querySelector(".kind").hidden, true);
     assert.equal(card(5).querySelector(".http-measurements").querySelector(".http-status").textContent, "200");
     assert.equal(card(5).querySelector(".http-measurements").querySelector(".http-latency").textContent, "0 ms");
@@ -390,11 +390,10 @@ test("built dashboard prioritizes both networks and preserves expanded rows acro
     breakdownSummary.focus();
     await document.querySelector("#refresh").handlers.get("click")();
     assert.deepEqual(ids("attention"), ["btc", "spv", "ckbadger"]);
-    assert.deepEqual(ids("mainnet"), ["ckb", "blockbook"]);
-    assert.deepEqual(ids("testnet3"), ["testnet3-http:btc-asset-api", "testnet3-http:other"]);
+    assert.deepEqual(ids("services"), ["ckb", "blockbook", "testnet3-http:btc-asset-api", "testnet3-http:other"]);
     assert.equal(card(2), movedRow);
     assert.equal(card(6), recoveredHttp);
-    assert.equal(card(2).querySelector(".card-network").hidden, true);
+    assert.equal(card(2).querySelector(".card-network").hidden, false);
     assert.equal(blockbookDetails.open, true);
     assert.equal(breakdown.open, true);
     assert.equal(document.activeElement, breakdownSummary);
@@ -464,8 +463,7 @@ test("built dashboard prioritizes both networks and preserves expanded rows acro
     await refresh.handlers.get("click")();
     assert.equal(section("attention").hidden, true);
     assert.deepEqual(ids("attention"), []);
-    assert.deepEqual(ids("mainnet"), serviceIds.slice(0, 5));
-    assert.deepEqual(ids("testnet3"), serviceIds.slice(5));
+    assert.deepEqual(ids("services"), serviceIds);
     assert.equal(card(2), beforeAllReady);
     // Use the real refresh + render path: repeated HTTP fetches and locale
     // re-renders of one snapshot cannot advance the classification.
@@ -481,7 +479,7 @@ test("built dashboard prioritizes both networks and preserves expanded rows acro
     };
     setGap(1);
     await refresh.handlers.get("click")();
-    assert.ok(ids("mainnet").includes(explorer.id));
+    assert.ok(ids("services").includes(explorer.id));
     assert.equal(card(serviceIds.indexOf(explorer.id)).querySelector(".sync-state").querySelector(".state-label").textContent, "Syncing");
     assert.match(strips(serviceIds.indexOf(explorer.id))[0].children[0].children[2].children[1].textContent, /1/);
     checkedAt += 30_000;
@@ -489,14 +487,14 @@ test("built dashboard prioritizes both networks and preserves expanded rows acro
     await refresh.handlers.get("click")();
     select("zh-CN");
     await refresh.handlers.get("click")();
-    assert.ok(ids("mainnet").includes(explorer.id), "same upstream sample must remain held after re-render");
+    assert.ok(ids("services").includes(explorer.id), "same upstream sample must remain held after re-render");
     checkedAt += 30_000;
     await refresh.handlers.get("click")();
     assert.ok(ids("attention").includes(explorer.id));
     checkedAt += 30_000;
     setGap(2);
     await refresh.handlers.get("click")();
-    assert.ok(ids("mainnet").includes(explorer.id), "recovery must move the card back immediately");
+    assert.ok(ids("services").includes(explorer.id), "recovery must move the card back immediately");
     checkedAt += 30_000;
     setGap(1,"bulk");
     await refresh.handlers.get("click")();
@@ -515,7 +513,7 @@ test("built dashboard prioritizes both networks and preserves expanded rows acro
     await refresh.handlers.get("click")();
     const decoderCard = card(serviceIds.indexOf(decoder.id));
     const versions = decoderCard.querySelector(".dob-measurements");
-    assert.ok(ids("testnet3").includes(decoder.id));
+    assert.ok(ids("services").includes(decoder.id));
     assert.equal(versions.hidden, false);
     assert.equal(versions.querySelector("dt").textContent, "DOB protocol versions");
     assert.equal(versions.querySelector("dd").textContent, "dob/0, dob/1");
@@ -523,6 +521,21 @@ test("built dashboard prioritizes both networks and preserves expanded rows acro
     assert.equal(strips(serviceIds.indexOf(decoder.id)).length, 0);
     assert.match(decoderCard.querySelector(".uptime-ratio").textContent, /100/);
     assert.equal(decoderCard.querySelector(".github-link").href, "https://github.com/sporeprotocol/dob-decoder-standalone-server");
+    const group = { id:"Apps and Nodes", label:"主网" };
+    services[1].group = group;
+    decoder.group = group;
+    const app = { id:"service-http:portal", group, kind:"http", label:"Portal",
+      state:"online", probeAvailable:true, metrics:[], availability:{windows:[]} };
+    services.push(app);
+    serviceIds.push(app.id);
+    await refresh.handlers.get("click")();
+    assert.equal(section("group:Apps and Nodes").querySelector("h2").textContent, "主网", "custom name is not translated");
+    assert.deepEqual(ids("group:Apps and Nodes"), ["ckb", decoder.id, app.id]);
+    assert.equal(card(1).querySelector(".card-network").textContent, "Mainnet");
+    const groupedDecoderCard = card(serviceIds.indexOf(decoder.id));
+    assert.equal(groupedDecoderCard.querySelector(".card-network").textContent, "Testnet");
+    assert.equal(card(serviceIds.indexOf(app.id)).querySelector(".card-network").hidden, true);
+
 
     checkedAt += 30_000;
     decoder.state = "degraded";
@@ -531,7 +544,8 @@ test("built dashboard prioritizes both networks and preserves expanded rows acro
     await refresh.handlers.get("click")();
     assert.ok(ids("attention").includes(decoder.id));
     assert.equal(decoderCard.querySelector(".sync-state").hidden, true);
-    assert.equal(decoderCard.querySelector(".dob-measurements").querySelector("dd").textContent, "No data");
+    assert.equal(card(serviceIds.indexOf(decoder.id)), groupedDecoderCard);
+    assert.equal(groupedDecoderCard.querySelector(".dob-measurements").querySelector("dd").textContent, "No data");
 
   } finally {
     for (const [key, descriptor] of Object.entries(original)) {

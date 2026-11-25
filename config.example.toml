@@ -87,3 +87,25 @@ url = "http://127.0.0.1:8889"
 # status_url = "https://monitor.example.com/"
 # failure_checks = 3
 # recovery_checks = 2
+
+# Optional: organize the dashboard by project or purpose instead of by network.
+# Group keys are independent of the chain; quoted keys may contain spaces or Unicode.
+# Move (do not duplicate) existing probes when grouping them. Their service IDs
+# and history stay unchanged if the kind, network and HTTP id stay the same.
+#
+# [groups.infrastructure]
+# label = "Infrastructure"
+#
+# [[groups.infrastructure.services]]
+# kind = "btc"
+# network = "mainnet"
+# url = "http://127.0.0.1:8332"
+# username = "monitor"
+# password_file = "btc-mainnet.password"
+#
+# [[groups.infrastructure.services]]
+# kind = "http"
+# id = "portal"
+# label = "Portal"
+# url = "https://portal.example.com/health"
+# Omit network for a service that does not belong to a chain.

@@ -35,6 +35,7 @@ export default {
   "等待数据": "Warte auf Daten",
   "等待状态数据…": "Warte auf Status …",
   "暂无服务数据": "Keine Dienstdaten",
+  "服务": "Dienste",
   "需要关注": "Handlungsbedarf",
   "暂无就绪服务": "Keine betriebsbereiten Dienste",
   "未命名服务": "Unbenannter Dienst",

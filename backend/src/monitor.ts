@@ -1,5 +1,5 @@
 import { networks, type Network, type Reading, type Snapshot, type Availability } from "../../shared/status.js";
-import type { Config } from "./config.js";
+import type { Config, Endpoint } from "./config.js";
 import { EmailAlerts } from "./email-alerts.js";
 import { availability, historyError, type HistoryStore } from "./history.js";
 import { compareBlockbook, inspectOnchain, mergeSpvStatus, metric, probe, reading, type BitcoinTip } from "./probes.js";
@@ -17,7 +17,7 @@ async function parallel<T, R>(items: T[], limit: number, fn: (item: T) => Promis
 }
 export class Monitor {
   snapshot: Snapshot;
-  private readonly probes;
+  private readonly probes: {network?: Network; id: string; endpoint: Endpoint}[];
   private spvMismatches = new Map<Network, string>();
   private bookHeights = new Map<Network, { height: number; since: number }>();
   private history: Record<string, Availability> = {};
@@ -27,8 +27,11 @@ export class Monitor {
   private initialPoll?: Promise<void>;
   private readonly alerts?: EmailAlerts;
   constructor(readonly config: Config, private readonly store: HistoryStore) {
-    this.probes = networks.flatMap(network => [...config.endpoints[network]].map(([key, endpoint]) =>
-      ({ network, id: `${network}-${key}`, endpoint })));
+    this.probes = [
+      ...networks.flatMap(network => [...config.endpoints[network]].map(([key, endpoint]) =>
+        ({ network, id: `${network}-${key}`, endpoint }))),
+      ...[...config.unscoped].map(([key, endpoint]) => ({ id: `service-${key}`, endpoint })),
+    ];
     if (config.emailAlerts) this.alerts = new EmailAlerts(config.historyPath, config.emailAlerts);
     this.record(new Map());
     this.snapshot = this.build(null, []);
@@ -37,7 +40,7 @@ export class Monitor {
     return {
       updatedAt, intervalSeconds: this.config.intervalSeconds, historyError: this.error,
       services: this.probes.map(({ network, id, endpoint }, index) => ({
-        id, network, kind: endpoint.kind, label: endpoint.label, publicUrl: endpoint.publicUrl, githubUrl: endpoint.githubUrl,
+        id, network, group: endpoint.group, kind: endpoint.kind, label: endpoint.label, publicUrl: endpoint.publicUrl, githubUrl: endpoint.githubUrl,
         ...(readings[index] ?? reading("unknown", [], "等待首次检查。")),
         probeAvailable: current[index] ?? null,
         availability: this.history[id] ?? availability(),
@@ -52,12 +55,14 @@ export class Monitor {
     const results = await parallel(this.probes, 8, ({ network, endpoint }) => probe(network, endpoint, this.config.timeoutSeconds));
     const tips = new Map<Network, BitcoinTip>();
     for (const [index, result] of results.entries()) {
-      if ("reading" in result && result.tip) tips.set(this.probes[index].network, result.tip);
+      const { network } = this.probes[index];
+      if (network && "reading" in result && result.tip) tips.set(network, result.tip);
     }
     const readings = await Promise.all(results.map(async (result, index) => {
       const { network, endpoint } = this.probes[index];
-      const btc = tips.get(network);
+      const btc = network && tips.get(network);
       if ("book" in result) {
+        if (!network) return reading("unknown", []);
         const { result: live, height } = compareBlockbook(network, result.book, result.backend, btc);
         if (height === undefined || live.state !== "syncing") this.bookHeights.delete(network);
         else {
@@ -69,8 +74,8 @@ export class Monitor {
         }
         return live;
       }
-      if (endpoint.kind === "blockbook") this.bookHeights.delete(network);
-      if (endpoint.kind === "spv") {
+      if (network && endpoint.kind === "blockbook") this.bookHeights.delete(network);
+      if (network && endpoint.kind === "spv") {
         const status = result.spvStatus;
         let live = result.reading;
         const previousMismatch = this.spvMismatches.get(network);

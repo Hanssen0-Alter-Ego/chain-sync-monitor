@@ -692,3 +692,57 @@ url="${upstream}/btc"
   referenceHeight = height;
   await poll("unknown", "等待复查");
 });
+
+test("named groups mix networks and unscoped apps without changing existing uptime IDs", async (t) => {
+  const dir = directory(t);
+  const url = await listen(t, createServer((_req, res) => res.end("ok")));
+  const path = join(dir, "monitor.toml");
+  writeFileSync(path, `[[networks.testnet.http]]
+id = "portal"
+label = "Portal test"
+url = "${url}"
+`);
+  const legacy = loadConfig(path);
+  const history = new HistoryStore(legacy.historyPath);
+  const first = new Monitor(legacy, history);
+  await first.poll();
+  const moved = `[groups."Ops & apps"]
+label = "运维 / Apps"
+
+[[groups."Ops & apps".services]]
+kind = "http"
+id = "portal"
+label = "Portal test"
+network = "testnet"
+url = "${url}"
+
+[[groups."Ops & apps".services]]
+kind = "http"
+id = "portal"
+label = "Portal"
+url = "${url}"
+
+[[groups."Ops & apps".services]]
+kind = "http"
+id = "portal"
+label = "Portal main"
+network = "mainnet"
+url = "${url}"
+`;
+  writeFileSync(path, moved);
+  const monitor = new Monitor(loadConfig(path), history);
+  await monitor.poll();
+  const services = JSON.parse(JSON.stringify(monitor.snapshot)).services;
+  assert.deepEqual(services.map(service => service.id), ["mainnet-http:portal", "testnet3-http:portal", "service-http:portal"]);
+  assert.deepEqual(services.map(service => service.network), ["mainnet", "testnet3", undefined]);
+  assert.ok(!Object.hasOwn(services[2], "network"));
+  assert.ok(services.every(service => service.state === "online"));
+  assert.ok(services.every(service => service.group.id === "Ops & apps" && service.group.label === "运维 / Apps"));
+  assert.deepEqual(services.map(service => service.availability.windows[0].total), [1, 2, 1]);
+  writeFileSync(path, moved.replace('network = "mainnet"', 'network = "testnet3"'));
+  assert.throws(() => loadConfig(path), /重复/);
+  writeFileSync(path, `[[groups.any.services]]
+kind = "btc"
+url = "${url}"`);
+  assert.throws(() => loadConfig(path), /network/);
+});

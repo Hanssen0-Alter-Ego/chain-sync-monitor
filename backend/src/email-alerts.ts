@@ -60,7 +60,7 @@ function mailFor(
     `incident_id: ${incident}`,
     `service_id: ${service.id}`,
     `service: ${service.label}`,
-    `network: ${service.network}`,
+    `network: ${service.network ?? "none"}`,
     `kind: ${service.kind}`,
     `state: ${service.state}`,
     `first_bad_at: ${iso(firstBad)}`,

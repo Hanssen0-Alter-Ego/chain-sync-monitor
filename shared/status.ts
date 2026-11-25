@@ -28,10 +28,12 @@ export interface Availability {
   dayBins?: AvailabilityBin[];
   windows: {seconds: number; ratio: number | null; available: number; total: number}[];
 }
+export interface ServiceGroup { id: string; label: string }
 export interface Service extends Reading {
   id: string;
   label: string;
-  network: Network;
+  network?: Network;
+  group?: ServiceGroup;
   kind: Kind;
   publicUrl?: string;
   githubUrl?: string;

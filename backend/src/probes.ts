@@ -345,12 +345,12 @@ export async function inspectOnchain(
     return { ...live, state: "degraded", note: "RPC 在线；链上检查未成功。" + (error instanceof ProbeError ? error.note : "") };
   }
 }
-export async function probe(network: Network, endpoint: Endpoint, timeout: number): Promise<BaseProbe> {
+export async function probe(network: Network | undefined, endpoint: Endpoint, timeout: number): Promise<BaseProbe> {
   try {
     switch (endpoint.kind) {
-      case "btc": return await bitcoin(network, endpoint, timeout);
+      case "btc": return network ? await bitcoin(network, endpoint, timeout) : { reading: reading("unknown", []), available: false };
       case "ckb": return await ckb(endpoint, timeout);
-      case "blockbook": return await blockbook(network, endpoint, timeout);
+      case "blockbook": return network ? await blockbook(network, endpoint, timeout) : { reading: reading("unknown", []), available: false };
       case "ckbadger": {
         const { status, data } = await readJson(endpoint.url, timeout, { extra: [503] });
         if (status === 503) {

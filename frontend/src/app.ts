@@ -29,10 +29,7 @@ let selectedLanguage = loadLanguage();
 let language = resolveLanguage(selectedLanguage);
 const t = (value: string) => translate(language, value);
 
-const networks = [
-  { id: "mainnet", label: "主网" },
-  { id: "testnet3", label: "测试网" },
-];
+const networkLabels = { mainnet: "主网", testnet: "测试网", testnet3: "测试网" } as const;
 const kinds = { btc: "BITCOIN", ckb: "CKB", blockbook: "INDEXER", spv: "SPV", ckbadger: "INDEXER", dob_decoder: "DOB", http: "HTTP" };
 const states = {
   synced: "已同步",
@@ -131,7 +128,7 @@ function render(snap: Snapshot | null) {
   // open details, links, or focus. The first section remains mounted when empty.
   const previousCards = new Map(Array.from(networkContainer.querySelectorAll<HTMLElement>("article[data-render-key]"),
     card => [card.dataset.renderKey!, card]));
-  const knownServices = (snap?.services ?? []).filter(service => networks.some(network => network.id === service?.network));
+  const knownServices = (snap?.services ?? []).filter(service => typeof service?.id === "string");
   const priorityById = trackAttention(snap);
   const priorityOf = (service: Service) => priorityById.get(service.id)?.priority ?? servicePriority(service);
   const attention = knownServices.filter(service => priorityOf(service) < 2)
@@ -142,21 +139,30 @@ function render(snap: Snapshot | null) {
     const networkElement = element(section, ".network");
     networkElement.dataset.network = id;
     networkElement.dataset.renderKey = id;
-    element(section, "h2").textContent = t(label);
+    element(section, "h2").textContent = label;
     return { section, networkElement, cards: element(section, ".cards") };
   }
 
-  const priority = sectionFor("attention", "需要关注");
+  const priority = sectionFor("attention", t("需要关注"));
   priority.networkElement.hidden = !attention.length;
-  for (const service of attention) {
-    const label = networks.find(network => network.id === service.network)?.label;
-    priority.cards.append(makeCard(service, label));
-  }
+  for (const service of attention) priority.cards.append(makeCard(service));
   fragment.append(priority.section);
 
-  for (const network of networks) {
-    const { section, cards } = sectionFor(network.id, network.label);
-    const services = knownServices.filter(service => service.network === network.id);
+  const groups = new Map<string, { label: string; services: Service[] }>();
+  for (const service of knownServices) {
+    const category = service.group;
+    const custom = typeof category?.id === "string" && typeof category.label === "string";
+    const id = custom ? "group:" + category.id : "services";
+    let group = groups.get(id);
+    if (!group) {
+      group = { label: custom ? category.label : t("服务"), services: [] };
+      groups.set(id, group);
+    }
+    group.services.push(service);
+  }
+  if (!groups.size) groups.set("services", { label: t("服务"), services: [] });
+  for (const [id, { label, services }] of groups) {
+    const { section, cards } = sectionFor(id, label);
     const ready = services.filter(service => priorityOf(service) === 2);
     const { online, unconfirmed, total } = probeTotals(services);
     element(section, ".network-summary").textContent = total
@@ -180,7 +186,7 @@ function render(snap: Snapshot | null) {
   }
 }
 
-function makeCard(service: Service, networkLabel?: string) {
+function makeCard(service: Service) {
   const card = serviceTemplate.content.cloneNode(true) as DocumentFragment;
   element(card, "article").dataset.renderKey = service.id;
   const state = Object.hasOwn(states, service.state) ? service.state : "unknown";
@@ -188,9 +194,12 @@ function makeCard(service: Service, networkLabel?: string) {
   kind.hidden = service.kind === "http";
   kind.textContent = Object.hasOwn(kinds, service.kind) ? kinds[service.kind] : "";
   const context = element(card, ".card-network");
+  const network = service.network;
+  const networkLabel = network && Object.hasOwn(networkLabels, network) ? networkLabels[network] : undefined;
   context.hidden = !networkLabel;
   context.textContent = networkLabel ? t(networkLabel) : "";
-  element(card, ".card-context").hidden = !networkLabel && kind.hidden;
+  if (networkLabel) context.dataset.chain = network === "mainnet" ? "mainnet" : "testnet";
+  element(card, ".card-context").hidden = kind.hidden;
   const heading = element(card, "h3");
   heading.textContent = service.label
     ? service.kind === "http" ? service.label : t(service.label)
