@@ -1,5 +1,6 @@
 import { networks, type Network, type Reading, type Snapshot, type Availability } from "../../shared/status.js";
 import type { Config } from "./config.js";
+import { EmailAlerts } from "./email-alerts.js";
 import { availability, historyError, type HistoryStore } from "./history.js";
 import { compareBlockbook, inspectOnchain, mergeSpvStatus, metric, probe, reading, type BitcoinTip } from "./probes.js";
 
@@ -23,9 +24,11 @@ export class Monitor {
   private timer?: ReturnType<typeof setTimeout>;
   private stopped = false;
   private initialPoll?: Promise<void>;
+  private readonly alerts?: EmailAlerts;
   constructor(readonly config: Config, private readonly store: HistoryStore) {
     this.probes = networks.flatMap(network => [...config.endpoints[network]].map(([key, endpoint]) =>
       ({ network, id: `${network}-${key}`, endpoint })));
+    if (config.emailAlerts) this.alerts = new EmailAlerts(config.historyPath, config.emailAlerts);
     this.record(new Map());
     this.snapshot = this.build(null, []);
   }
@@ -80,7 +83,14 @@ export class Monitor {
       return result.reading;
     }));
     this.record(new Map(results.map((result, index) => [this.probes[index].id, result.available])));
-    this.snapshot = this.build(new Date().toISOString(), readings, results.map(result => result.available));
+    const now = Date.now();
+    this.snapshot = this.build(new Date(now).toISOString(), readings, results.map(result => result.available));
+    if (this.alerts) {
+      try {
+        this.alerts.observe(this.snapshot.services, now);
+        void this.alerts.flush(now).catch(() => console.error("Could not process the email alert outbox."));
+      } catch { console.error("Could not save email alert state."); }
+    }
   }
   start() {
     if (this.initialPoll) return;

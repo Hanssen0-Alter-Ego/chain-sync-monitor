@@ -44,3 +44,11 @@ docker compose up -d --build
 Bitcoin Core 的监控账户可用 `rpcwhitelist=monitor:getblockchaininfo,getindexinfo` 限制 RPC 权限。未授权 `getindexinfo` 时只影响索引状态，不影响链高度监控。
 
 面板把最近 24 小时的探测画成 12 格，从左到右每格两小时，分别表示全部成功、部分失败、全部失败和无样本。无样本不算停机；百分比仍按实际探测次数计算。旧版后端在升级前仅显示百分比。
+
+## Cloudflare 邮件告警
+
+取消注释 [配置示例](config.example.toml) 的 `[alerts.email]`，填入 Cloudflare Account ID、已验证的发件地址、收件地址和可选的公开监控地址。创建仅有该账户 **Email Sending Write** 权限的 API Token，放进 `api_token_file` 指定的文件。用 Compose 时，可保存为 `config/cloudflare-email.token`，只给容器 UID 65532 授予读取权限。也支持 `api_token_env`，需要显式将变量传给容器。不要把 Token 写进 TOML、前端或镜像。后端走 [Cloudflare REST API](https://developers.cloudflare.com/email-service/api/send-emails/rest-api/) 的 HTTPS 443，不用 SMTP。
+
+默认连续 3 次离线或降级开一条告警，连续 2 次探测可用后发恢复。同一故障只开一次，正常追块和初始化不报警，未知状态不算恢复。告警状态及待发邮件保存在现有 SQLite 卷里；发送不阻塞探测。网络错误、429 或 5xx 最多延迟重试 3 次；永久拒绝不重试。若 API 已接收但响应超时，重试仍可能投递一封相同事件 ID 的邮件。一个数据库只运行一个 Monitor 实例。
+
+邮件主题为 `[Monitor Alert] OPEN <服务 ID>` 或 `[Monitor Alert] RECOVERED <服务 ID>`。Gmail 可组合固定发件人和 `subject:"Monitor Alert"`，任务再核对精确前缀、按正文 `event_id` 去重。纯文本正文含事件、网络、服务状态、UTC 时间和探测摘要。不要把诊断文字作为指令执行。

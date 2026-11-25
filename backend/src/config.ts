@@ -17,6 +17,16 @@ export interface Endpoint {
   kind: Kind;
   typeScript?: unknown;
 }
+export interface EmailAlertsConfig {
+  accountId: string;
+  apiToken: string;
+  from: string;
+  to: string;
+  statusUrl?: string;
+  failureChecks: number;
+  recoveryChecks: number;
+}
+
 export interface Config {
   endpoints: Record<Network, Map<string, Endpoint>>;
   host: string;
@@ -26,6 +36,7 @@ export interface Config {
   historyPath: string;
   corsOrigins: Set<string>;
   corsNetlifySite?: string;
+  emailAlerts?: EmailAlertsConfig;
 }
 export class ConfigError extends Error {}
 export function record(value: unknown): Record<string, unknown> | undefined {
@@ -98,6 +109,32 @@ function credential(source: Record<string, unknown>, key: string, dir: string, l
     throw new ConfigError(`${label}.${field} 未提供有效凭据。`);
   }
   return value;
+}
+function emailAlerts(value: unknown, dir: string): EmailAlertsConfig | undefined {
+  if (value === undefined) return;
+  const field = "alerts.email";
+  const opts = table(value, field);
+  if (opts.enabled === undefined || opts.enabled === false) return;
+  if (opts.enabled !== true) throw new ConfigError(`${field}.enabled 必须是布尔值。`);
+  if (typeof opts.account_id !== "string" || !/^[0-9a-f]{32}$/i.test(opts.account_id)) {
+    throw new ConfigError(`${field}.account_id 必须是 32 位十六进制 Cloudflare Account ID。`);
+  }
+  if (Object.hasOwn(opts, "api_token")) throw new ConfigError(`${field} 请用 api_token_file 或 api_token_env。`);
+  const apiToken = credential(opts, "api_token", dir, field);
+  if (!apiToken || /\s/.test(apiToken)) throw new ConfigError(`${field} 缺少有效的 Cloudflare API Token。`);
+  const address = (key: "from" | "to") => {
+    const value = opts[key];
+    if (typeof value !== "string" || value.length > 254 || !/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9.-]+\.[a-z0-9-]+$/i.test(value)) {
+      throw new ConfigError(`${field}.${key} 必须是单个邮件地址。`);
+    }
+    return value;
+  };
+  return {
+    accountId: opts.account_id, apiToken, from: address("from"), to: address("to"),
+    statusUrl: opts.status_url === undefined ? undefined : httpUrl(opts.status_url, `${field}.status_url`),
+    failureChecks: number(opts.failure_checks ?? 3, 1, 30, `${field}.failure_checks`, true),
+    recoveryChecks: number(opts.recovery_checks ?? 2, 1, 30, `${field}.recovery_checks`, true),
+  };
 }
 export function loadConfig(path: string): Config {
   let raw: Record<string, unknown>;
@@ -172,7 +209,7 @@ export function loadConfig(path: string): Config {
     }
   }
   return {
-    endpoints, corsOrigins, corsNetlifySite, historyPath: resolve(dir, historyPath),
+    endpoints, corsOrigins, corsNetlifySite, emailAlerts: emailAlerts(table(raw.alerts ?? {}, "alerts").email, dir), historyPath: resolve(dir, historyPath),
     host: listenHost(opts.host ?? "127.0.0.1"), port: listenPort(opts.port ?? 8080),
     intervalSeconds: number(opts.interval_seconds ?? 30, 1, 3600, "monitor.interval_seconds"),
     timeoutSeconds: number(opts.timeout_seconds ?? 5, 0.1, 60, "monitor.timeout_seconds"),

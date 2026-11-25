@@ -68,3 +68,14 @@ url = "http://127.0.0.1:8889"
 #
 # [networks.testnet.dob_decoder]
 # url = "https://dob-decoder-test.ckbccc.com"
+
+# Optional: Cloudflare Email Sending over HTTPS. Leave commented to disable.
+# [alerts.email]
+# enabled = true
+# account_id = "0123456789abcdef0123456789abcdef"
+# api_token_file = "cloudflare-email.token"
+# from = "monitor@notify.ckbccc.com"
+# to = "alerts@example.com"
+# status_url = "https://monitor.example.com/"
+# failure_checks = 3
+# recovery_checks = 2
