@@ -271,18 +271,11 @@ export async function inspectOnchain(
     if (seconds <= 0) throw new ProbeError("上游请求超时。", "offline");
     return seconds;
   };
-  if (scriptValue === undefined) return { ...live, note: "RPC 在线；配置 type_script 可查看链上 SPV 高度。" };
+  if (scriptValue === undefined) return { ...live, note: "RPC 在线；配置 code_hash、hash_type 和 args 可查看链上 SPV 高度。" };
   if (!ckb) return { ...live, note: "RPC 在线；请配置 CKB 端点以核对链上 SPV 高度。" };
-  const script = record(scriptValue);
-  if (!script || typeof script.code_hash !== "string" || !ckbHash.test(script.code_hash)
-      || typeof script.args !== "string" || !/^0x[0-9a-f]{68}$/i.test(script.args)
-      || !["type", "data", "data1", "data2"].includes(String(script.hash_type))) {
-    return { ...live, state: "degraded", note: "SPV type_script 无效（要求 32 字节 code hash 和 34 字节 args）。" };
-  }
-  const {code_hash, hash_type, args} = script;
   try {
     const page = record(await rpc(ckb, timeout, "get_cells", [
-      { script: {code_hash, hash_type, args}, script_type: "type", script_search_mode: "exact", with_data: true },
+      { script: scriptValue, script_type: "type", script_search_mode: "exact", with_data: true },
       "asc", "0x101",
     ]));
     if (!Array.isArray(page?.objects) || page.objects.length > 256) throw new ProbeError("链上 SPV 查询未返回有效结果。");
@@ -301,7 +294,7 @@ export async function inspectOnchain(
       else throw new ProbeError("出现未知或重复的 SPV Cell。");
     }
     const active = clients.get(ids[0]);
-    if (ids.length !== 1 || clients.size !== parseInt(args.slice(66, 68), 16) || !active || active.first > active.tip) {
+    if (ids.length !== 1 || clients.size !== parseInt(scriptValue.args.slice(66, 68), 16) || !active || active.first > active.tip) {
       throw new ProbeError("SPV 实例在 CKB 索引器中尚未完整可见。");
     }
     const { first, tip, hash } = active;

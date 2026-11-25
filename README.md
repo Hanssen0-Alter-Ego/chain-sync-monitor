@@ -55,11 +55,9 @@ Copy the block from [Caddyfile.example](Caddyfile.example) into your host's Cadd
 
 - **CKBadger:** query `/api/mainnet/v1/statistics/network` and `/api/testnet/v1/statistics/network` for a shared frontend, or `/api/v1/statistics/network` for a standalone instance, to get indexed/target heights and deep-fork status. Startup `503 initializing` shows as syncing but does not count as available until the endpoint returns usable data.
 
-- **DOB Decoder:** configure `[networks.mainnet.dob_decoder]` and/or `[networks.testnet.dob_decoder]`. The monitor checks the endpoint via JSON-RPC POST `dob_protocol_version` (no arguments), shows its advertised protocol versions and includes successful replies in uptime. It does not decode an asset or check chain sync. See [config.example.toml](config.example.toml) for both network URLs.
+- **DOB Decoder:** add a service with `kind = "dob_decoder"` for each endpoint. The monitor checks the endpoint via JSON-RPC POST `dob_protocol_version` (no arguments), shows its advertised protocol versions and includes successful replies in uptime. It does not decode an asset or check chain sync. See [config.example.toml](config.example.toml) for both network URLs.
 
-Use `[networks.testnet.*]` for testnet services. The Bitcoin network depends on the node behind the configured URL; this label does not select a chain or extend supported probe networks. `[networks.testnet3.*]` is a legacy alias: choose one spelling for all testnet services. Switching the table names does not change status API IDs or reset uptime history.
-
-### Optional display groups
+### Service groups
 
 Each card shows Mainnet or Testnet directly to the left of its availability
 status. Set your own group name using `[groups.<name>]` and put each
@@ -84,17 +82,15 @@ url = "https://portal.example.com/health"
 
 Use `network = "mainnet"` or `"testnet"` for chain probes; HTTP and DOB
 Decoder can omit it and show no network badge. `label` on the group is
-optional and defaults to its key. The existing `[networks.*]` configuration
-still works and its ungrouped cards appear under Services. When moving an
-existing entry, remove its old definition. Keeping the network, kind, and
-HTTP `id` preserves its uptime history and alert ID. Changing the network
-(including removing it) gives the service a new ID.
+optional and defaults to its key. Service IDs and uptime history are based on
+network, kind, and the HTTP `id`, not the group. The network label does not
+change which chain an endpoint serves.
 
 Generic HTTP checks use a configured GET URL and count 2xx as available without following redirects. BTC Asset API's `/healthcheck` measures dependency and worker health, not sync progress or SPV proof validity. Mainnet Blockbook is optional and configured the same way as the testnet instance.
 
 ## Availability history
 
-The 24-hour and 7-day figures are successful probes divided by observed probes, not a continuous SLA. Syncing can count as available. Time the monitor itself was down is unobserved and excluded; the UI shows sample counts. Compose stores roughly eight days in the `monitor-history` volume, which survives restarts; don't remove the volume if you want to keep the data. For a non-container run, set `monitor.history_path` to override the database next to the config file. An existing Python deployment can reuse the same config and SQLite database/Compose volume; stop the old monitor before starting the new one. The host-mode override is still supported.
+The 24-hour and 7-day figures are successful probes divided by observed probes, not a continuous SLA. Syncing can count as available. Time the monitor itself was down is unobserved and excluded; the UI shows sample counts. Compose stores roughly eight days in the `monitor-history` volume, which survives restarts; don't remove the volume if you want to keep the data. For a non-container run, set `monitor.history_path` to override the database next to the config file. Use one monitor process per SQLite database. The host-mode override is supported.
 
 ## Cloudflare email alerts
 
@@ -121,6 +117,6 @@ The dashboard shows the last 24 hours as 12 two-hour probe buckets, oldest first
 
 ### SPV block hash consistency
 
-With an SPV `type_script` and CKB endpoint configured, the monitor compares the active on-chain client's tip hash to Bitcoin Core at the **same height** (using `getblockhash` when needed). Use `networks.<network>.spv.bitcoin_reference` to specify a separately operated, fully synced Bitcoin Core; it accepts `url` and the same optional username/password sources as the normal Bitcoin endpoint. With no separate reference, it uses the network's configured `btc` endpoint, which does not establish independence. A configured independent reference never silently falls back. Allow `getblockchaininfo` and `getblockhash` for the reference account.
+With `code_hash`, `hash_type`, and `args` set directly on an SPV service and a CKB endpoint on the same network, the monitor compares the active on-chain client's tip hash to Bitcoin Core at the **same height** (using `getblockhash` when needed). Use the SPV service’s `bitcoin_reference` subtable to specify a separately operated, fully synced Bitcoin Core; it accepts `url` and the same optional username/password sources as the normal Bitcoin endpoint. With no separate reference, it uses the network's configured `btc` endpoint, which does not establish independence. A configured independent reference never silently falls back. Allow `getblockchaininfo` and `getblockhash` for the reference account.
 
 A missing comparable observation is unknown, not a disagreement. Two consecutive polls of the same hash disagreement mark SPV degraded and use the usual configured email failure threshold. A match clears the comparison failure; availability history continues to describe RPC reachability. This is read-only monitoring, not a check enforced by the SPV contract or signer.

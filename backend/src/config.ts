@@ -1,7 +1,7 @@
 import { closeSync, openSync, readFileSync, readSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { parse } from "smol-toml";
-import { networks, type Network, type Kind, type ServiceGroup } from "../../shared/status.js";
+import { type Network, type Kind, type ServiceGroup } from "../../shared/status.js";
 
 export const labels: Record<Exclude<Kind, "http">, string> = {
   btc: "Bitcoin Core", ckb: "CKB 节点与索引器", blockbook: "Blockbook",
@@ -16,7 +16,7 @@ export interface Endpoint {
   label: string;
   kind: Kind;
   group?: ServiceGroup;
-  typeScript?: unknown;
+  typeScript?: { code_hash: string; hash_type: string; args: string };
   bitcoinReference?: Endpoint;
 }
 export interface EmailAlertsConfig {
@@ -167,12 +167,8 @@ export function loadConfig(path: string): Config {
   }
   const endpoints: Config["endpoints"] = { mainnet: new Map(), testnet3: new Map() };
   const unscoped = new Map<string, Endpoint>();
-  const configured = table(raw.networks ?? {}, "networks");
-  if (Object.keys(configured).some((net) => net !== "testnet" && !Object.hasOwn(endpoints, net))) {
-    throw new ConfigError("网络名称仅支持 mainnet 和 testnet（旧写法 testnet3 仍可用）。");
-  }
-  if (Object.hasOwn(configured, "testnet") && Object.hasOwn(configured, "testnet3")) {
-    throw new ConfigError("networks.testnet 和 networks.testnet3 不能同时配置；请将测试网服务统一放到 networks.testnet。");
+  if (Object.keys(raw).some(key => !["monitor", "alerts", "groups"].includes(key))) {
+    throw new ConfigError("配置顶层仅支持 monitor、alerts 和 groups。");
   }
   function displayLabel(value: unknown, field: string) {
     if (typeof value !== "string" || !value.trim() || value.trim().length > 80 || /[\x00-\x1f\x7f]/.test(value)) {
@@ -202,7 +198,18 @@ export function loadConfig(path: string): Config {
     };
     if (kind === "btc") endpoint.authorization = bitcoinAuthorization(service, dir, field);
     if (kind === "spv") {
-      endpoint.typeScript = service.type_script;
+      if (Object.keys(service).some(key => !["kind", "network", "url", "public_url", "github_url", "code_hash", "hash_type", "args", "bitcoin_reference"].includes(key))) {
+        throw new ConfigError(`${field} 包含不支持的 SPV 配置项。`);
+      }
+      const { code_hash, hash_type, args } = service;
+      if (code_hash !== undefined || hash_type !== undefined || args !== undefined) {
+        if (typeof code_hash !== "string" || !/^0x[0-9a-f]{64}$/i.test(code_hash)
+            || typeof hash_type !== "string" || !["type", "data", "data1", "data2"].includes(hash_type)
+            || typeof args !== "string" || !/^0x[0-9a-f]{68}$/i.test(args)) {
+          throw new ConfigError(`${field} 的 SPV 脚本须同时提供有效的 code_hash（32 字节）、hash_type 和 args（34 字节）。`);
+        }
+        endpoint.typeScript = { code_hash, hash_type, args };
+      }
       if (service.bitcoin_reference !== undefined) {
         const name = field + ".bitcoin_reference";
         const reference = table(service.bitcoin_reference, name);
@@ -216,25 +223,6 @@ export function loadConfig(path: string): Config {
   }
   function knownKind(kind: unknown): kind is Kind {
     return typeof kind === "string" && (kind === "http" || Object.hasOwn(labels, kind));
-  }
-  for (const net of networks) {
-    // Keep API and uptime IDs stable even when moving a service into a named group.
-    const key = net === "testnet3" && Object.hasOwn(configured, "testnet") ? "testnet" : net;
-    const fieldPrefix = `networks.${key}`;
-    const network = table(configured[key] ?? {}, fieldPrefix);
-    if (Object.keys(network).some(kind => !knownKind(kind))) throw new ConfigError(`${fieldPrefix} 包含不支持的服务。`);
-    for (const kind of Object.keys(labels) as (keyof typeof labels)[]) {
-      if (Object.hasOwn(network, kind)) {
-        const field = `${fieldPrefix}.${kind}`;
-        add(table(network[kind], field), kind, field, net);
-      }
-    }
-    const probes = network.http ?? [];
-    if (!Array.isArray(probes) || probes.length > 8) throw new ConfigError(`${fieldPrefix}.http 必须是数组，每个网络最多 8 项。`);
-    for (const probe of probes as unknown[]) {
-      const field = `${fieldPrefix}.http`;
-      add(table(probe, field), "http", field, net);
-    }
   }
   for (const [id, value] of Object.entries(table(raw.groups ?? {}, "groups"))) {
     const field = `groups.${id}`;
@@ -251,7 +239,7 @@ export function loadConfig(path: string): Config {
       if (network === undefined && kind !== "http" && kind !== "dob_decoder") {
         throw new ConfigError(`${name}.network 必须为 mainnet 或 testnet。`);
       }
-      if (network !== undefined && network !== "mainnet" && network !== "testnet" && network !== "testnet3") {
+      if (network !== undefined && network !== "mainnet" && network !== "testnet") {
         throw new ConfigError(`${name}.network 必须为 mainnet 或 testnet。`);
       }
       add(service, kind, name, network === "testnet" ? "testnet3" : network, group);

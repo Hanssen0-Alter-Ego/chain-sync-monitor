@@ -8,62 +8,88 @@ timeout_seconds = 4
 # Opt in to the Netlify site domain and its deployment-ID permalinks.
 # cors_netlify_site = "chain-sync-monitor"
 
-[networks.mainnet.ckb]
+[groups.ckb]
+label = "CKB"
+
+[[groups.ckb.services]]
+kind = "ckb"
+network = "mainnet"
 url = "http://127.0.0.1:8114"
 
-[networks.mainnet.btc]
+[groups.btc]
+label = "BTC"
+
+[[groups.btc.services]]
+kind = "btc"
+network = "mainnet"
 url = "http://127.0.0.1:8332"
 username = "monitor"
 password_file = "btc-mainnet.password"
 
-[networks.mainnet.spv]
+[[groups.ckb.services]]
+kind = "spv"
+network = "mainnet"
 url = "http://127.0.0.1:8888"
 # Optional: uncomment and set all three fields to track on-chain progress.
-# [networks.mainnet.spv.type_script]
 # code_hash = "0x..."
 # hash_type = "type"
 # args = "0x..."
 
 # Optional: compare SPV against a separate, fully synced Bitcoin Core.
-# Without this section the monitor compares against networks.mainnet.btc.
+# Without this section the monitor uses the BTC service on the same network.
 # Allow only getblockchaininfo and getblockhash for the reference RPC account.
-# [networks.mainnet.spv.bitcoin_reference]
+# [groups.ckb.services.bitcoin_reference]
 # url = "http://10.0.0.2:8332"
 # username = "monitor"
 # password_file = "btc-reference.password"
 
-[networks.testnet.ckb]
+[[groups.ckb.services]]
+kind = "ckb"
+network = "testnet"
 url = "http://127.0.0.1:8116"
 
-[networks.testnet.btc]
+[[groups.btc.services]]
+kind = "btc"
+network = "testnet"
 url = "http://127.0.0.1:18332"
 username = "monitor"
 password_file = "btc-testnet3.password"
 
-[networks.testnet.blockbook]
+[[groups.btc.services]]
+kind = "blockbook"
+network = "testnet"
 url = "http://127.0.0.1:19130/api/"
 
-[networks.testnet.spv]
+[[groups.ckb.services]]
+kind = "spv"
+network = "testnet"
 url = "http://127.0.0.1:8889"
-# [networks.testnet.spv.type_script]
 # code_hash = "0x..."
 # hash_type = "type"
 # args = "0x..."
 
 # Optional services: add when they are reachable from the monitor.
-# [networks.mainnet.blockbook]
+# [[groups.btc.services]]
+# kind = "blockbook"
+# network = "mainnet"
 # url = "http://127.0.0.1:19131/api/"
 #
-# [networks.mainnet.ckbadger]
+# [[groups.ckb.services]]
+# kind = "ckbadger"
+# network = "mainnet"
 # url = "http://127.0.0.1:8100/api/mainnet/v1/statistics/network"
 # public_url = "https://explorer.example.com/"
 #
 # For standalone CKBadger (one server per network), use /api/v1/statistics/network.
-# [networks.testnet.ckbadger]
+# [[groups.ckb.services]]
+# kind = "ckbadger"
+# network = "testnet"
 # url = "http://127.0.0.1:8100/api/testnet/v1/statistics/network"
 #
 # Repeat this array table with a different stable ID for each HTTP-only probe.
-# [[networks.testnet.http]]
+# [[groups.btc.services]]
+# kind = "http"
+# network = "testnet"
 # id = "btc-asset-api"
 # label = "BTC Asset API"
 # github_url = "https://github.com/RGBPlusPlus/btc-assets-api"
@@ -71,10 +97,14 @@ url = "http://127.0.0.1:8889"
 
 # DOB Decoder uptime and advertised versions (JSON-RPC; not chain sync).
 # Uncomment whichever instances you want to monitor.
-# [networks.mainnet.dob_decoder]
+# [[groups.ckb.services]]
+# kind = "dob_decoder"
+# network = "mainnet"
 # url = "https://dob-decoder.ckbccc.com"
 #
-# [networks.testnet.dob_decoder]
+# [[groups.ckb.services]]
+# kind = "dob_decoder"
+# network = "testnet"
 # url = "https://dob-decoder-test.ckbccc.com"
 
 # Optional: Cloudflare Email Sending over HTTPS. Leave commented to disable.
@@ -90,7 +120,7 @@ url = "http://127.0.0.1:8889"
 
 # Optional: organize the dashboard by project or purpose instead of by network.
 # Group keys are independent of the chain; quoted keys may contain spaces or Unicode.
-# Move (do not duplicate) existing probes when grouping them. Their service IDs
+# Put each probe in one group. Service IDs
 # and history stay unchanged if the kind, network and HTTP id stay the same.
 #
 # [groups.infrastructure]

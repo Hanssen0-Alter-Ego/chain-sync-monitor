@@ -142,7 +142,9 @@ test("a real monitor poll queues email without waiting for Cloudflare or exposin
   t.after(() => new Promise(resolve => server.close(resolve)));
   const base = `http://127.0.0.1:${server.address().port}/`;
   const path = join(dir, "monitor.toml");
-  writeFileSync(path, `[[networks.mainnet.http]]
+  writeFileSync(path, `[[groups.probes.services]]
+kind = "http"
+network = "mainnet"
 id = "health"
 label = "Health"
 url = "${base}"

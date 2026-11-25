@@ -60,23 +60,20 @@ test("DOB Decoder uses its version RPC and records valid replies as availability
   }));
   const replyRequest = { jsonrpc: "2.0", method: "dob_protocol_version", params: [], id: 1 };
   const path = join(dir, "monitor.toml");
-  writeFileSync(path, `[networks.mainnet.dob_decoder]
+  writeFileSync(path, `[[groups.probes.services]]
+kind = "dob_decoder"
+network = "mainnet"
 url = "${target}/valid"
-[networks.testnet3.dob_decoder]
+[[groups.probes.services]]
+kind = "dob_decoder"
+network = "testnet"
 url = "${target}/empty"
 `);
   const cfg = loadConfig(path);
   const monitor = new Monitor(cfg, new HistoryStore(cfg.historyPath));
   await monitor.poll();
-  writeFileSync(path, readFileSync(path, "utf8").replace("networks.testnet3", "networks.testnet"));
-  const preferred = loadConfig(path);
-  assert.deepEqual(preferred, cfg);
-  const switchedMonitor = new Monitor(preferred, new HistoryStore(preferred.historyPath));
-  await switchedMonitor.poll();
-  assert.deepEqual([...seen].sort(), ["/empty", "/empty", "/valid", "/valid"]);
-  assert.equal(switchedMonitor.snapshot.services[1].network, "testnet3");
-  assert.equal(switchedMonitor.snapshot.services[1].id, "testnet3-dob_decoder");
-  assert.equal(switchedMonitor.snapshot.services[1].availability.windows[0].total, 2);
+  assert.deepEqual([...seen].sort(), ["/empty", "/valid"]);
+  assert.equal(monitor.snapshot.services[1].network, "testnet3");
   const [main, testnet] = monitor.snapshot.services;
   assert.equal(main.id, "mainnet-dob_decoder");
   assert.equal(main.state, "online");
@@ -94,18 +91,22 @@ url = "${target}/empty"
   }
 });
 
-test("testnet config aliases cannot be mixed and errors use the configured spelling", (t) => {
+test("SPV script fields are optional, but must be valid together", (t) => {
   const path = join(directory(t), "monitor.toml");
-  writeFileSync(path, `[networks.testnet.dob_decoder]
-url = "https://decoder.example"
-[networks.testnet3.ckb]
-url = "https://ckb.example"
-`);
-  assert.throws(() => loadConfig(path), /networks\.testnet 和 networks\.testnet3 不能同时配置/);
-  writeFileSync(path, `[networks.testnet.dob_decoder]
-url = "invalid"
-`);
-  assert.throws(() => loadConfig(path), /networks\.testnet\.dob_decoder\.url/);
+  const service = `[[groups.ckb.services]]
+kind = "spv"
+network = "testnet"
+url = "https://spv.example"
+`;
+  const load = (toml) => { writeFileSync(path, toml); return loadConfig(path); };
+  assert.equal(load(service).endpoints.testnet3.get("spv").typeScript, undefined);
+  assert.throws(() => load(service + 'hash_type = "type"'), /code_hash.*hash_type.*args/);
+  assert.throws(() => load(service + `code_hash = "0x${"aa".repeat(32)}"
+hash_type = "invalid"
+args = "0x${"bb".repeat(34)}"`), /code_hash.*hash_type.*args/);
+  assert.throws(() => load(service.replace('network = "testnet"', 'network = "invalid"')), /network/);
+  assert.throws(() => load(service + '[groups.ckb.services.extra]'), /不支持的 SPV 配置项/);
+  assert.throws(() => load('[extra]'), /配置顶层仅支持/);
 });
 
 test("separate frontend status API, all probes, CORS and no implicit RPC/config disclosure", async (t) => {
@@ -158,32 +159,49 @@ test("separate frontend status API, all probes, CORS and no implicit RPC/config 
   writeFileSync(join(dir, "monitor.toml"), `
 [monitor]
 cors_origins = ["https://status.netlify.app", "https://status.example.com/"]
-[networks.mainnet.btc]
+[[groups.probes.services]]
+kind = "btc"
+network = "mainnet"
 url = "${target}/main/private-bitcoin"
 username = "watcher"
 password_file = "password"
-[networks.mainnet.ckb]
+[[groups.probes.services]]
+kind = "ckb"
+network = "mainnet"
 url = "${target}/main/private-ckb"
-[networks.mainnet.spv]
+[[groups.probes.services]]
+kind = "spv"
+network = "mainnet"
 url = "${target}/main/private-spv"
-[networks.mainnet.spv.type_script]
 code_hash = "0x${"ab".repeat(32)}"
 hash_type = "type"
 args = "0x${"cd".repeat(32)}0100"
-[networks.mainnet.blockbook]
+[[groups.probes.services]]
+kind = "blockbook"
+network = "mainnet"
 url = "${target}/main/book"
-[networks.mainnet.ckbadger]
+[[groups.probes.services]]
+kind = "ckbadger"
+network = "mainnet"
 url = "${target}/api/mainnet/v1/statistics/network"
 public_url = "https://explorer.example.com/"
-[networks.testnet3.btc]
+[[groups.probes.services]]
+kind = "btc"
+network = "testnet"
 url = "${target}/test/private-bitcoin"
 username = "watcher"
 password_file = "password"
-[networks.testnet3.blockbook]
+[[groups.probes.services]]
+kind = "blockbook"
+network = "testnet"
 url = "${target}/test/book/api/"
-[networks.testnet3.ckbadger]
+[[groups.probes.services]]
+kind = "ckbadger"
+network = "testnet"
 url = "${target}/api/testnet/v1/statistics/network"
-[[networks.testnet3.http]]
+[[groups.probes.services]]
+kind = "http"
+network = "testnet"
 id = "asset-api"
 label = "Asset API"
 url = "${target}/private-asset/healthcheck"
@@ -205,7 +223,7 @@ github_url = "https://github.com/example/project/"
   assert.equal(answer.headers.get("vary"), "Origin");
   assert.equal(answer.headers.get("cache-control"), "no-store");
   const raw = await answer.text();
-  for (const privateValue of [target, "/private-bitcoin", "/private-asset", "SAMPLE_ONLY_PASSWORD", "watcher", "type_script"]) {
+  for (const privateValue of [target, "/private-bitcoin", "/private-asset", "SAMPLE_ONLY_PASSWORD", "watcher", "code_hash"]) {
     assert.ok(!raw.includes(privateValue), privateValue);
   }
   const snapshot = JSON.parse(raw);
@@ -314,9 +332,13 @@ test("the latest probe result is independent of synchronization and historical s
   }));
   const path = join(directory(t), "config.toml");
   writeFileSync(path, `
-[networks.mainnet.spv]
+[[groups.probes.services]]
+kind = "spv"
+network = "mainnet"
 url = "${upstream}/proof"
-[[networks.mainnet.http]]
+[[groups.probes.services]]
+kind = "http"
+network = "mainnet"
 id = "health"
 label = "Health"
 url = "${upstream}/healthcheck"
@@ -351,7 +373,9 @@ test("poll certifies near-tip lag without concealing initial sync or unrelated c
   }));
   const path = join(directory(t), "config.toml");
   writeFileSync(path, ["btc","ckb","blockbook","ckbadger"].map((kind,index) =>
-    `[networks.mainnet.${kind}]
+    `[[groups.probes.services]]
+kind = "${kind}"
+network = "mainnet"
 url="${upstream}/${["btc","ckb","book","explorer"][index]}"
 `).join(""));
   const settings = loadConfig(path);
@@ -396,7 +420,9 @@ test("SPV cache, direct Core tip and optional CKB verification keep distinct obs
     return json(res,missing);
   }));
   const path=join(directory(t),"config.toml");
-  const cfg=`[networks.mainnet.spv]\nurl="${upstream}/spv"\n`;
+  const cfg=`[[groups.probes.services]]
+kind = "spv"
+network = "mainnet"\nurl="${upstream}/spv"\n`;
   const poll=async (toml)=>{
     writeFileSync(path,toml);
     const settings=loadConfig(path);
@@ -412,13 +438,16 @@ test("SPV cache, direct Core tip and optional CKB verification keep distinct obs
   assert.equal(metrics.get("本地 SPV 高度").value,105);
   assert.equal(metrics.get("SPV 缓存的链上高度").observedAt,new Date(at*1000).toISOString());
   service=await poll(cfg+`
-[networks.mainnet.spv.type_script]
 code_hash="0x${"ab".repeat(32)}"
 hash_type="type"
 args="0x${"cd".repeat(32)}0100"
-[networks.mainnet.ckb]
+[[groups.probes.services]]
+kind = "ckb"
+network = "mainnet"
 url="${upstream}/ckb"
-[networks.mainnet.btc]
+[[groups.probes.services]]
+kind = "btc"
+network = "mainnet"
 url="${upstream}/btc"
 `);
   metrics=new Map(service.metrics.map(m=>[m.label,m.value]));
@@ -432,7 +461,7 @@ url="${upstream}/btc"
   cache=undefined;
   service=await poll(cfg);
   assert.equal(service.probeAvailable,true);
-  assert.match(service.note,/type_script/);
+  assert.match(service.note,/code_hash/);
 });
 
 test("Blockbook falls back to its backend blocks only with a matching chain and no error", async (t) => {
@@ -441,7 +470,9 @@ test("Blockbook falls back to its backend blocks only with a matching chain and 
     backend:upstream,blockbook:{bestHeight:91,inSync:true,inSyncMempool:true},
   })));
   const path=join(directory(t),"config.toml");
-  writeFileSync(path,`[networks.mainnet.blockbook]\nurl="${node}"\n`);
+  writeFileSync(path,`[[groups.probes.services]]
+kind = "blockbook"
+network = "mainnet"\nurl="${node}"\n`);
   const cfg=loadConfig(path);
   const monitor=new Monitor(cfg,new HistoryStore(cfg.historyPath));
   const check=async()=>{ await monitor.poll(); return monitor.snapshot.services[0]; };
@@ -477,14 +508,18 @@ test("never forwards authorization via redirects, and bounds response time/body"
 test("validates RPC URLs, public links and exact CORS configuration", (t) => {
   const dir = directory(t), path = join(dir, "config.toml");
   for (const url of ["http://test:secret@host/rpc", "http://host/rpc?", "http://host/rpc#"]) {
-    writeFileSync(path, `[networks.mainnet.btc]\nurl = "${url}"\n`);
+    writeFileSync(path, `[[groups.probes.services]]
+kind = "btc"
+network = "mainnet"\nurl = "${url}"\n`);
     assert.throws(() => loadConfig(path), /HTTP/);
   }
   for (const allowed of ["https://site.example/path", "*", "null"]) {
     writeFileSync(path, `[monitor]\ncors_origins = ["${allowed}"]\n`);
     assert.throws(() => loadConfig(path), /cors_origins/);
   }
-  writeFileSync(path, '[networks.mainnet.btc]\nurl="http://private-host"\npublic_url="javascript:alert(1)"');
+  writeFileSync(path, `[[groups.probes.services]]
+kind = "btc"
+network = "mainnet"\nurl="http://private-host"\npublic_url="javascript:alert(1)"`);
   assert.throws(() => loadConfig(path), /public_url/);
 });
 test("Netlify permalink CORS is opt-in, site-specific, and shared by reads and preflights", async (t) => {
@@ -633,19 +668,24 @@ test("SPV checks a configured independent reference at the exact CKB client heig
   }));
   const path = join(directory(t), "config.toml");
   writeFileSync(path, `
-[networks.mainnet.spv]
+[[groups.probes.services]]
+kind = "spv"
+network = "mainnet"
 url="${upstream}/spv"
-[networks.mainnet.spv.type_script]
 code_hash="0x${"ab".repeat(32)}"
 hash_type="type"
 args="0x${"cd".repeat(32)}0100"
-[networks.mainnet.spv.bitcoin_reference]
+[groups.probes.services.bitcoin_reference]
 url="${upstream}/reference"
 username="reference-user"
 password="REFERENCE_ONLY"
-[networks.mainnet.ckb]
+[[groups.probes.services]]
+kind = "ckb"
+network = "mainnet"
 url="${upstream}/ckb"
-[networks.mainnet.btc]
+[[groups.probes.services]]
+kind = "btc"
+network = "mainnet"
 url="${upstream}/btc"
 `);
   const cfg = loadConfig(path);
@@ -697,14 +737,16 @@ test("named groups mix networks and unscoped apps without changing existing upti
   const dir = directory(t);
   const url = await listen(t, createServer((_req, res) => res.end("ok")));
   const path = join(dir, "monitor.toml");
-  writeFileSync(path, `[[networks.testnet.http]]
+  writeFileSync(path, `[[groups.probes.services]]
+kind = "http"
+network = "testnet"
 id = "portal"
 label = "Portal test"
 url = "${url}"
 `);
-  const legacy = loadConfig(path);
-  const history = new HistoryStore(legacy.historyPath);
-  const first = new Monitor(legacy, history);
+  const initial = loadConfig(path);
+  const history = new HistoryStore(initial.historyPath);
+  const first = new Monitor(initial, history);
   await first.poll();
   const moved = `[groups."Ops & apps"]
 label = "运维 / Apps"
@@ -739,7 +781,7 @@ url = "${url}"
   assert.ok(services.every(service => service.state === "online"));
   assert.ok(services.every(service => service.group.id === "Ops & apps" && service.group.label === "运维 / Apps"));
   assert.deepEqual(services.map(service => service.availability.windows[0].total), [1, 2, 1]);
-  writeFileSync(path, moved.replace('network = "mainnet"', 'network = "testnet3"'));
+  writeFileSync(path, moved.replace('network = "mainnet"', 'network = "testnet"'));
   assert.throws(() => loadConfig(path), /重复/);
   writeFileSync(path, `[[groups.any.services]]
 kind = "btc"
