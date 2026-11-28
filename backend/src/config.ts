@@ -29,7 +29,6 @@ export interface EmailAlertsConfig {
   recoveryChecks: number;
   lagBlocks: number;
   lagSeconds: number;
-  notifyChanges: boolean;
 }
 
 export interface Config {
@@ -143,16 +142,12 @@ function emailAlerts(value: unknown, dir: string): EmailAlertsConfig | undefined
     }
     return value;
   };
-  if (opts.notify_changes !== undefined && typeof opts.notify_changes !== "boolean") {
-    throw new ConfigError(`${field}.notify_changes 必须是布尔值。`);
-  }
   return {
     accountId: opts.account_id, apiToken, from: address("from"), to: address("to"),
     statusUrl: opts.status_url === undefined ? undefined : httpUrl(opts.status_url, `${field}.status_url`),
     failureChecks: number(opts.failure_checks ?? 3, 1, 30, `${field}.failure_checks`, true),
     lagBlocks: number(opts.lag_blocks ?? 2, 2, Number.MAX_SAFE_INTEGER, `${field}.lag_blocks`, true),
     lagSeconds: number(opts.lag_seconds ?? 300, 1, 86_400, `${field}.lag_seconds`, true),
-    notifyChanges: opts.notify_changes ?? false,
     recoveryChecks: number(opts.recovery_checks ?? 2, 1, 30, `${field}.recovery_checks`, true),
   };
 }

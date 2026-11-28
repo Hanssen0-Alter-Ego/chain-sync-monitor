@@ -119,8 +119,6 @@ url = "http://127.0.0.1:8889"
 # recovery_checks = 2
 # lag_blocks = 2
 # lag_seconds = 300
-# Enable after every downstream alert consumer accepts CHANGED.
-# notify_changes = false
 
 # Optional: organize the dashboard by project or purpose instead of by network.
 # Group keys are independent of the chain; quoted keys may contain spaces or Unicode.

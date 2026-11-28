@@ -182,13 +182,13 @@ export class EmailAlerts {
           : this.config.failureChecks;
         const sustained = sample !== "reachable-but-lagging" || (samples >= 2 && now - since >= this.config.lagSeconds * 1000);
         if (sample && sample !== confirmed && samples >= checks && sustained) {
-          const event = recovering ? "RECOVERED" : incident ? "CHANGED" : "OPEN";
-          incident ??= randomUUID();
-          const state = recovering ? (service.kind === "ckbadger" ? "synced" : service.state) : sample;
-          // An old OPEN may have expired. Legacy faults were offline/degraded, so
-          // only a move to verified lag is certain until a new baseline is established.
-          const knownChange = confirmed !== null || sample === "reachable-but-lagging";
-          if (event !== "CHANGED" || (this.config.notifyChanges && knownChange)) {
+          // With an expired legacy OPEN, confirming offline/degraded establishes the
+          // missing baseline. Neither state proves the fault changed since that OPEN.
+          const baseline = incident && !confirmed && (sample === "offline" || sample === "degraded");
+          if (!baseline) {
+            const event = recovering ? "RECOVERED" : incident ? "CHANGED" : "OPEN";
+            incident ??= randomUUID();
+            const state = recovering ? (service.kind === "ckbadger" ? "synced" : service.state) : sample;
             const mail = mailFor(service, event, incident, firstBad, now, last, state, since, this.config.statusUrl);
             enqueue.run(mail.id, service.id, mail.subject, mail.text, now, now);
             queued.push({ event, event_id: mail.id, service_id: service.id, state });

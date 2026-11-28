@@ -15,7 +15,7 @@ import { EmailAlerts, sendCloudflareEmail } from "../dist/server/backend/src/ema
 const config = {
   accountId: "1".repeat(32), apiToken: "mock-token", from: "monitor@example.com",
   to: "alarms@example.com", statusUrl: "https://monitor.example.com/",
-  failureChecks: 3, recoveryChecks: 2, lagBlocks: 2, lagSeconds: 300, notifyChanges: false,
+  failureChecks: 3, recoveryChecks: 2, lagBlocks: 2, lagSeconds: 300,
 };
 const service = (state, probeAvailable, syncTipLag) => ({
   id: "mainnet-ckbadger", label: "CKBadger", kind: "ckbadger", network: "mainnet",
@@ -175,8 +175,7 @@ test("continuous verified lag opens at five minutes; gaps, jitter and restarts p
   const db = join(directory(t), "monitor.sqlite3");
   const sent = [];
   const send = async (_config, mail) => { sent.push(mail); return { ok: true }; };
-  const settings = { ...config, notifyChanges: true };
-  let alerts = new EmailAlerts(db, settings, send);
+  let alerts = new EmailAlerts(db, config, send);
   let now = 1_800_000_000_000;
   const poll = (state = "syncing", gap = 2, elapsed = 30_000) => {
     now += elapsed;
@@ -190,7 +189,7 @@ test("continuous verified lag opens at five minutes; gaps, jitter and restarts p
   repeat(9);
   await alerts.flush(now);
   assert.equal(sent.length, 0);
-  alerts = new EmailAlerts(db, settings, send);
+  alerts = new EmailAlerts(db, config, send);
   poll();
   const firstLag = now;
   repeat(4);
@@ -222,7 +221,7 @@ test("continuous verified lag opens at five minutes; gaps, jitter and restarts p
   assert.equal(values("tip_lag_blocks")[0], "2");
 });
 
-test("custom lag threshold leaves a neutral band; compatibility mode suppresses intermediate mail", async t => {
+test("a gap in the neutral band cannot close an active lag incident", async t => {
   const sent = [];
   const alerts = new EmailAlerts(join(directory(t), "history"), {
     ...config, failureChecks: 1, recoveryChecks: 1, lagBlocks: 4, lagSeconds: 10,
@@ -235,11 +234,12 @@ test("custom lag threshold leaves a neutral band; compatibility mode suppresses 
   poll(40_001, "synced");
   poll(50_001, "synced", 0);
   await alerts.flush(50_001);
-  assert.equal(sent.length, 1);
+  assert.deepEqual(sent.map(m => m.subject.split(" ")[2]), ["OPEN", "CHANGED"]);
   poll(60_001, "synced", 1);
   await alerts.flush(60_001);
-  assert.match(sent[1].text, /event: RECOVERED/);
-  assert.match(sent[1].text, /previous_state: reachable-but-lagging/);
+  assert.equal(sent.length, 3);
+  assert.match(sent[2].text, /event: RECOVERED/);
+  assert.match(sent[2].text, /previous_state: reachable-but-lagging/);
 });
 
 test("legacy SQLite upgrade retains a queued OPEN and retries each transition in incident order", async t => {
@@ -258,7 +258,7 @@ test("legacy SQLite upgrade retains a queued OPEN and retries each transition in
   db.prepare("INSERT INTO email_alert_outbox VALUES (?, ?, ?, ?, 500, 1500, 1, NULL)")
     .run(incident + ":open", id, "[Monitor Alert] OPEN " + id, opening);
   db.close();
-  const configV2 = { ...config, failureChecks: 1, recoveryChecks: 1, lagSeconds: 1, notifyChanges: true };
+  const configV2 = { ...config, failureChecks: 1, recoveryChecks: 1, lagSeconds: 1 };
   const attempts = [];
   const send = async (_cfg, mail) => {
     attempts.push(mail);
@@ -292,7 +292,7 @@ test("legacy SQLite upgrade retains a queued OPEN and retries each transition in
 
 test("an HTTP service opens on consecutive failures and debounces later fault changes", async t => {
   const sent = [];
-  const alerts = new EmailAlerts(join(directory(t), "history"), { ...config, notifyChanges: true },
+  const alerts = new EmailAlerts(join(directory(t), "history"), config,
     async (_cfg, mail) => { sent.push(mail); return { ok: true }; });
   let now = 0;
   const poll = state => alerts.observe([{ ...service(state, state === "online"), id: "service-http:health", kind: "http" }], ++now);

@@ -823,7 +823,7 @@ test("CKBadger alert evidence needs a fresh same-network CKB tip and an incremen
   const sent = [];
   cfg.emailAlerts = {
     accountId: "1".repeat(32), apiToken: "mock", from: "monitor@example.test", to: "alerts@example.test",
-    lagBlocks: 2, lagSeconds: 300, failureChecks: 3, recoveryChecks: 2, notifyChanges: true,
+    lagBlocks: 2, lagSeconds: 300, failureChecks: 3, recoveryChecks: 2,
   };
   t.mock.method(globalThis, "fetch", async (_url, init) => {
     sent.push(JSON.parse(init.body));
