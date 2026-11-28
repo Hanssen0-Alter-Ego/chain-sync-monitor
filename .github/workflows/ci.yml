@@ -60,7 +60,7 @@ jobs:
               test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/)" = 404
             else
               curl -fsS http://127.0.0.1:8080/ >"$config_dir/index.html"
-              grep -q 'CHAIN SYNC MONITOR' "$config_dir/index.html"
+              grep -Fq '<h1>Chain Sync Monitor</h1>' "$config_dir/index.html"
               curl -fsS http://127.0.0.1:8080/app.js >"$config_dir/app.js"
               grep -q '/api/status' "$config_dir/app.js"
             fi
