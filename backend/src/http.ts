@@ -17,10 +17,12 @@ interface Options {
   authorization?: string;
   extra?: number[];
   statusOnly?: boolean;
+  invalidJsonState?: State;
 }
 interface Reply {
   status: number;
   body: Uint8Array;
+  observedAt?: number;
 }
 function request(url: string, timeout: number, options: Options): Promise<Reply> {
   const transport = new URL(url).protocol === "https:" ? httpsRequest : httpRequest;
@@ -54,7 +56,15 @@ function request(url: string, timeout: number, options: Options): Promise<Reply>
           fail(new ProbeError("上游响应超过大小限制。")); discard();
         } else chunks.push(chunk);
       });
-      response.on("end", () => done({status, body: Buffer.concat(chunks)}));
+      response.on("end", () => {
+        const received = Date.now();
+        const { date, age } = response.headers;
+        // A cached response can have an old Date, an Age, or both.
+        const originTime = date === undefined ? received : Date.parse(date);
+        const observedAt = originTime <= received && (age === undefined || /^\d+$/.test(age))
+          ? Math.min(originTime, received - Number(age ?? 0) * 1000) : NaN;
+        done({status, body: Buffer.concat(chunks), observedAt});
+      });
       response.on("error", () => fail(new ProbeError("无法读取 HTTP 响应。", "offline")));
     });
     req.on("error", () => fail(new ProbeError("无法连接上游或读取 HTTP 响应。", "offline")));
@@ -66,12 +76,13 @@ function request(url: string, timeout: number, options: Options): Promise<Reply>
   });
 }
 export async function readJson(url: string, timeout: number, options: Options = {}) {
-  const { status, body } = await request(url, timeout, options);
+  const { status, body, observedAt } = await request(url, timeout, options);
   try {
     const data: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body));
-    return { status, data };
+    return { status, data, observedAt };
   } catch {
-    throw new ProbeError(status === 200 ? "上游没有返回有效的 JSON。" : `上游返回 HTTP ${status}。`);
+    if (status === 200) throw new ProbeError("上游没有返回有效的 JSON。", options.invalidJsonState);
+    throw new ProbeError(`上游返回 HTTP ${status}。`);
   }
 }
 export async function statusOnly(url: string, timeout: number) {

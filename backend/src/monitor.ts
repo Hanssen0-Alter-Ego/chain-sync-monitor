@@ -2,7 +2,7 @@ import { networks, type Network, type Reading, type Snapshot, type Availability 
 import type { Config, Endpoint } from "./config.js";
 import { EmailAlerts } from "./email-alerts.js";
 import { availability, historyError, type HistoryStore } from "./history.js";
-import { compareBlockbook, inspectOnchain, mergeSpvStatus, metric, probe, reading, type BitcoinTip } from "./probes.js";
+import { compareBlockbook, inspectOnchain, mergeSpvStatus, metric, probe, reading, verifiedBadgerLag, type BitcoinTip, type CkbTip } from "./probes.js";
 
 async function parallel<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>) {
   const output: R[] = [];
@@ -32,7 +32,10 @@ export class Monitor {
         ({ network, id: `${network}-${key}`, endpoint }))),
       ...[...config.unscoped].map(([key, endpoint]) => ({ id: `service-${key}`, endpoint })),
     ];
-    if (config.emailAlerts) this.alerts = new EmailAlerts(config.historyPath, config.emailAlerts);
+    if (config.emailAlerts) {
+      const maxSampleGapMs = Math.max(config.intervalSeconds * 1.5, config.timeoutSeconds * 2) * 1000;
+      this.alerts = new EmailAlerts(config.historyPath, config.emailAlerts, undefined, maxSampleGapMs);
+    }
     this.record(new Map());
     this.snapshot = this.build(null, []);
   }
@@ -54,8 +57,10 @@ export class Monitor {
   async poll() {
     const results = await parallel(this.probes, 8, ({ network, endpoint }) => probe(network, endpoint, this.config.timeoutSeconds));
     const tips = new Map<Network, BitcoinTip>();
+    const ckbTips = new Map<Network, CkbTip>();
     for (const [index, result] of results.entries()) {
       const { network } = this.probes[index];
+      if (network && "reading" in result && result.ckbTip) ckbTips.set(network, result.ckbTip);
       if (network && "reading" in result && result.tip) tips.set(network, result.tip);
     }
     const readings = await Promise.all(results.map(async (result, index) => {
@@ -91,6 +96,16 @@ export class Monitor {
           live = { ...live, note: "SPV 高度来自服务缓存的观测，不代表已独立核实同步。" };
         }
         return mergeSpvStatus(live, status, btc);
+      }
+      if (network && result.badgerIndex) {
+        const tip = ckbTips.get(network), reference = this.config.endpoints[network].get("ckb");
+        if (reference && tip) {
+          const syncTipLag = await verifiedBadgerLag(network, reference, this.config.timeoutSeconds, result.badgerIndex, tip);
+          if (syncTipLag !== undefined) {
+            return { ...result.reading, state: syncTipLag > 0 ? "syncing" as const : result.reading.state,
+              metrics: [...result.reading.metrics, metric("已验证区块高度", tip.height)], syncTipLag };
+          }
+        }
       }
       return result.reading;
     }));

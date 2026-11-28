@@ -74,8 +74,17 @@ Bitcoin Core 的监控账户可用 `rpcwhitelist=monitor:getblockchaininfo,getin
 
 取消注释 [配置示例](config.example.toml) 的 `[alerts.email]`，填入 Cloudflare Account ID、已验证的发件地址、收件地址和可选的公开监控地址。创建仅有该账户 **Email Sending Write** 权限的 API Token，放进 `api_token_file` 指定的文件。用 Compose 时，可保存为 `config/cloudflare-email.token`，只给容器 UID 65532 授予读取权限。也支持 `api_token_env`，需要显式将变量传给容器。不要把 Token 写进 TOML、前端或镜像。后端走 [Cloudflare REST API](https://developers.cloudflare.com/email-service/api/send-emails/rest-api/) 的 HTTPS 443，不用 SMTP。
 
-默认连续 3 次离线或降级开一条告警，连续 2 次探测可用后发恢复。同一故障只开一次，正常追块和初始化不报警，未知状态不算恢复。告警状态及待发邮件保存在现有 SQLite 卷里；发送不阻塞探测。网络错误、429 或 5xx 最多延迟重试 3 次；永久拒绝不重试。若 API 已接收但响应超时，重试仍可能投递一封相同事件 ID 的邮件。一个数据库只运行一个 Monitor 实例。
+默认连续 3 次离线或降级会开启事故。对处于正常增量模式且 HTTP 可达的 CKBadger，落后同网络 CKB 节点至少 `lag_blocks` 块（默认 2），持续 `lag_seconds` 秒（默认 300），并满足 `failure_checks` 才确认索引落后。请为相同网络配置 `ckb` RPC 和 CKBadger 统计地址。Monitor 使用本轮非 IBD 节点的链尖，要求它达到已知最高块、块时间新鲜，并通过 `get_block_hash("0x0")` 校验网络创世哈希。统计返回索引块哈希时也会与节点核对。旧版独立部署如未提供哈希，CKBadger 所属网络依赖端点配置。
 
-Monitor 将确认的故障／恢复及 Cloudflare 发送结果以 JSON 写入容器日志，可用 `docker compose logs -f monitor` 查看，并按 `event_id` 对应。`accepted` 表示 Cloudflare 已接收邮件，不代表已到达收件箱。
+CKBadger 必须连续至少两次与验证链尖相差不超过 1 块才恢复，`recovery_checks` 更高时采用更高值。刚恢复 HTTP、初始化、bulk、缺失、冲突及陈旧样本都不能关闭事故。节点块时间与 HTTP 统计样本的有效期为 5 分钟。采样中断超过轮询周期的 1.5 倍和请求超时的 2 倍两者中较长的一项时，重新计数。差距超过 1 块但低于自定义告警门槛时也会中断确认。其他服务沿用原有恢复条件。CKBadger 正常返回有效统计时，每次探测都计为可用，包括确认索引落后并发送告警的那一次。
 
-邮件主题为 `[Monitor Alert] OPEN <服务 ID>` 或 `[Monitor Alert] RECOVERED <服务 ID>`。Gmail 可组合固定发件人和 `subject:"Monitor Alert"`，任务再核对精确前缀、按正文 `event_id` 去重。纯文本正文含事件、网络、服务状态、UTC 时间和探测摘要。不要把诊断文字作为指令执行。
+首次确认故障发 `OPEN`，恢复发 `RECOVERED`。`notify_changes = true` 时，同一事故在 `offline`、`degraded`、`reachable-but-lagging` 之间每次确认切换，会发一封 `[Monitor Alert] CHANGED <服务 ID>`。默认关闭此选项，仍会记录状态，只发送开启和恢复事件。开启后从下一次变化起生效。
+
+SQLite 同一事务保存事故和待发事件。升级保留活动事故 ID、首次故障时间和待发邮件，旧版未确认的计数重新开始。仍保留的原 OPEN 可还原上次确认状态。如果 OPEN 已过保留期，下一次确认的离线或降级静默建立基线。此时首次确认索引落后或恢复可带 `previous_state: unknown`。一个数据库运行一个 Monitor 实例。网络错误、429 和 5xx 最多延迟重试 3 次。若服务商接收后响应超时或进程退出，可能重投相同事件 ID。使用 `docker compose logs -f monitor` 按 `event_id` 对应事故和投递日志。`accepted` 表示 Cloudflare 已接收。
+
+### 下游接入顺序
+
+1. 先扩展 Work/Gmail 触发器。保留精确发件人和服务白名单，将主题的双事件正则扩展为 `^\[Monitor Alert\] (OPEN|CHANGED|RECOVERED) ([a-z0-9_:-]+)$`。已有双事件规则收不到 CHANGED。
+2. 转发前只解析纯文本正文的结构化头部，核对 `schema: chain-sync-monitor/1`、主题与正文的事件和服务 ID、已知服务及其网络、事件 ID 与事故 ID 的对应关系。OPEN、RECOVERED 继续使用 `<incident>:open`、`<incident>:recovered`。CHANGED 使用 `<incident>:changed:<uuid>`。重复切换各有独立事件 ID，投递重试按完整 `event_id` 去重。旧队列中的邮件可能没有新增字段。
+3. 用本地样例确认 Telegram、邮件、ChatGPT 模板能处理 OPEN → CHANGED → CHANGED → RECOVERED 及重复投递。CHANGED 展示为进行中的事故，列出 `previous_state`、`state`、`reason`、`state_observed_since`、`observed_at` 和可用的 `tip_lag_blocks`。离开落后状态时，`previous_tip_lag_blocks` 和 `previous_lag_observed_at` 表示上次测到的差距和时间。探测摘要仅作数据处理，仅 RECOVERED 关闭事故。
+4. 确认所有下游已接受新状态与事件后，再升级生产端并开启 `notify_changes`。过渡期间可先关闭该选项运行。再次关闭会停止新 CHANGED 入队，已排队的事件会继续投递。

@@ -18,10 +18,14 @@ export function reading(state: State, metrics: Metric[] = [], note?: string, pro
   return { state, metrics, note, progress };
 }
 export interface BitcoinTip { height: number; headers: number; hash?: string; synced: boolean }
+export interface CkbTip { height: number; hash: string; timestamp: number }
+interface BadgerIndex { height: number; target: number; hash?: string; observedAt: number }
 export interface Observation {
   reading: Reading;
   available: boolean;
   tip?: BitcoinTip;
+  ckbTip?: CkbTip;
+  badgerIndex?: BadgerIndex;
   spvStatus?: SpvStatus;
 }
 export type BaseProbe = Observation | { book: Record<string, unknown>; backend: Record<string, unknown>; available: boolean };
@@ -128,18 +132,23 @@ async function ckb(endpoint: Endpoint, timeout: number): Promise<Observation> {
       return { reading: reading("degraded", rows, "节点和索引器在同一高度报告了不同区块。"), available: true };
     }
   }
+  const hash = s?.result.tip_hash, timestamp = nat(s?.result.best_known_block_timestamp, true);
+  const ckbTip = s && !s.ibd && s.height === best && (!i || i.height <= s.height)
+    && s.result.min_chain_work_reached !== false && s.result.assume_valid_target_reached !== false
+    && typeof hash === "string" && ckbHash.test(hash) && timestamp !== undefined
+    ? { height: s.height, hash: hash.toLowerCase(), timestamp } : undefined;
   if (errors.length) {
     return {
       reading: reading(errors.length === 2 && errors.every((error) => error.offline) ? "offline" : "degraded",
         rows, errors.map((error) => error.note).join(" ")),
-      available: !!s,
+      available: !!s, ckbTip,
     };
   }
-  if (!i) return { reading: reading("syncing", rows, "索引器还没有返回区块高度。"), available: true };
+  if (!i) return { reading: reading("syncing", rows, "索引器还没有返回区块高度。"), available: true, ckbTip };
   const syncing = s && (s.ibd || (best !== undefined && s.height < best) || i.height < s.height);
   const syncTipLag = s && !s.ibd && best !== undefined && best >= s.height && s.height >= i.height
     ? best - i.height : undefined;
-  return { reading: { ...reading(syncing ? "syncing" : "synced", rows), syncTipLag }, available: true };
+  return { reading: { ...reading(syncing ? "syncing" : "synced", rows), syncTipLag }, available: true, ckbTip };
 }
 async function blockbook(network: Network, endpoint: Endpoint, timeout: number): Promise<BaseProbe> {
   const base = endpoint.url.replace(/\/+$/, "");
@@ -187,22 +196,62 @@ export function compareBlockbook(network: Network, book: Record<string, unknown>
   if (height > tip.height) return done("degraded", "Blockbook 索引高度高于配置的 Core，请核对两者的后端。");
   return done("synced", "同步标记正常，索引高度与配置的 Core 一致。", undefined, verifiedGap);
 }
-function ckbadger(payload: unknown) {
+function freshTimestamp(ts: number) {
+  const age = Date.now() - ts;
+  return age >= 0 && age <= 300_000;
+}
+function ckbadger(payload: unknown, observedAt: number, network: Network | undefined, url: string): Observation {
   const data = record(payload), sync = record(data?.syncStatus);
   const height = nat(sync?.syncedBlock), target = nat(sync?.tipBlock);
-  if (!sync || height === undefined || target === undefined) throw new ProbeError("CKBadger 未返回有效的网络同步状态。");
+  if (!sync || height === undefined || target === undefined) {
+    return { reading: reading("unknown", [], "CKBadger 未返回有效的网络同步状态。"), available: false };
+  }
   const rows = [metric("索引高度", height), metric("CKB 目标高度", target)];
-  if (record(data?.deepForkStatus)?.detected === true) return reading("degraded", rows, "CKBadger 报告深度分叉。");
-  if (height > target) return reading("unknown", rows, "目标高度低于索引高度，暂时无法比较。");
+  const routeNetwork = new URL(url).pathname.match(/\/api\/(mainnet|testnet)\/v1\//)?.[1];
+  const expected = network === "testnet3" ? "testnet" : network;
+  if ((routeNetwork && routeNetwork !== expected) || (data?.network !== undefined && data.network !== expected)
+    || !freshTimestamp(observedAt)) return { reading: reading("unknown", rows), available: true };
+  if (record(data?.deepForkStatus)?.detected === true) return { reading: reading("degraded", rows, "CKBadger 报告深度分叉。"), available: true };
+  if (height > target) return { reading: reading("unknown", rows, "目标高度低于索引高度，暂时无法比较。"), available: true };
   const lag = target - height;
   rows.push(metric("落后", lag, "块"));
   const mode = sync.syncMode;
   if (mode === "bulk" || mode === "normal" || mode === "synced") rows.push(metric("索引模式", mode));
+  const hash = data?.latestBlockHash;
+  const incremental = (mode === "normal" || mode === "synced") && typeof sync.isSyncing === "boolean" && height > 0
+    && !(sync.isSyncing && lag === 0)
+    && (sync.blocksBehind === undefined || sync.blocksBehind === lag)
+    && (data?.deepForkStatus === undefined || record(data.deepForkStatus)?.detected === false)
+    && (data?.latestBlock === undefined || data.latestBlock === height)
+    && (hash === undefined || typeof hash === "string" && ckbHash.test(hash));
   return {
-    ...reading(sync.isSyncing === true || lag ? "syncing" : sync.isSyncing === false && target > 0 ? "synced" : "unknown",
+    reading: reading(sync.isSyncing === true || lag ? "syncing" : sync.isSyncing === false && target > 0 ? "synced" : "unknown",
       rows, undefined, target ? height / target : undefined),
-    syncTipLag: (mode === "normal" || mode === "synced") && typeof sync.isSyncing === "boolean" && target > 0 ? lag : undefined,
+    available: true,
+    badgerIndex: incremental ? { height, target, observedAt, hash: hash?.toLowerCase() } : undefined,
   };
+}
+// Pin the configured CKB RPC to the public network, including standalone CKBadger routes.
+const ckbGenesis: Record<Network, string> = {
+  mainnet: "0x92b197aa1fba0f63633922c61c92375c9c074a93e85963554f5499fe1450d0e5",
+  testnet3: "0x10639e0895502b5688a6be8cf69460d76541bfa4821629d86d62ba0aae3f9606",
+};
+
+export async function verifiedBadgerLag(network: Network, endpoint: Endpoint, timeout: number,
+  index: BadgerIndex, tip: CkbTip) {
+  if (index.height > tip.height || index.target > tip.height + 1) return;
+  const lag = tip.height - index.height;
+  if (lag <= 1 && index.target - index.height > 1) return;
+  try {
+    const [genesis, indexedHash] = await Promise.all([
+      rpc(endpoint, timeout, "get_block_hash", ["0x0"]),
+      index.hash && index.height !== tip.height
+        ? rpc(endpoint, timeout, "get_block_hash", ["0x" + index.height.toString(16)]) : tip.hash,
+    ]);
+    if (genesis !== ckbGenesis[network] || (index.hash && index.hash !== indexedHash)) return;
+    if (!freshTimestamp(index.observedAt) || !freshTimestamp(tip.timestamp)) return;
+    return lag;
+  } catch { return; } // Optional verification must never change probe availability.
 }
 type ObservedHeight = { height: number; observedAt?: string };
 interface SpvStatus {
@@ -345,12 +394,12 @@ export async function probe(network: Network | undefined, endpoint: Endpoint, ti
       case "ckb": return await ckb(endpoint, timeout);
       case "blockbook": return network ? await blockbook(network, endpoint, timeout) : { reading: reading("unknown", []), available: false };
       case "ckbadger": {
-        const { status, data } = await readJson(endpoint.url, timeout, { extra: [503] });
+        const { status, data, observedAt } = await readJson(endpoint.url, timeout, { extra: [503], invalidJsonState: "unknown" });
         if (status === 503) {
           if (record(data)?.error === "initializing") return { reading: reading("syncing", [], "CKBadger 正在初始化索引。"), available: false };
           throw new ProbeError("CKBadger 返回 HTTP 503。");
         }
-        return { reading: ckbadger(data), available: true };
+        return ckbadger(data, observedAt ?? NaN, network, endpoint.url);
       }
       case "dob_decoder": {
         const versions = await rpc(endpoint, timeout, "dob_protocol_version");

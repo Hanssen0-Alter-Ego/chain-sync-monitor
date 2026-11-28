@@ -5,9 +5,15 @@ import { record, type EmailAlertsConfig } from "./config.js";
 
 const retryDelays = [30_000, 120_000, 600_000] as const;
 const retention = 7 * 24 * 60 * 60 * 1000;
-type EventKind = "OPEN" | "RECOVERED";
+type EventKind = "OPEN" | "CHANGED" | "RECOVERED";
+type Fault = "offline" | "degraded" | "reachable-but-lagging";
+type Sample = Fault | "healthy" | null;
 type EventRow = { id: string; subject: string; text: string; attempts: number };
-type ServiceState = { incident: string | null; bad: number; good: number; first_bad: number | null };
+type ServiceState = {
+  incident: string | null; confirmed: Fault | null; first_bad: number | null;
+  candidate: Sample; since: number; samples: number; last_seen: number | null;
+  lag: number | null; lag_at: number | null;
+};
 type Delivery = { ok: true } | { ok: false; retry: boolean; reason: string };
 
 export async function sendCloudflareEmail(
@@ -42,16 +48,28 @@ export async function sendCloudflareEmail(
   }
 }
 
-function observation(service: Service) {
-  if (service.state === "offline" || service.state === "degraded") return "bad";
-  if (service.probeAvailable === true && (service.state === "online" || service.state === "synced" || service.state === "syncing")) return "good";
-  return "neutral";
+function observation(service: Service, config: EmailAlertsConfig): Sample {
+  if (service.state === "offline" || service.state === "degraded") return service.state;
+  if (!service.probeAvailable || !["synced", "online", "syncing"].includes(service.state)) return null;
+  if (service.kind !== "ckbadger") return "healthy";
+  const gap = service.syncTipLag;
+  if (gap === undefined || !Number.isSafeInteger(gap) || gap < 0) return null;
+  if (gap <= 1) return "healthy";
+  return gap >= config.lagBlocks ? "reachable-but-lagging" : null;
+}
+
+function reason(state: string, service: Service) {
+  if (state === "reachable-but-lagging") return "Index persistently behind the verified CKB tip";
+  if (state === "synced" && service.kind === "ckbadger") return "Index within one block of the verified CKB tip";
+  return service.note ?? `Probe reports ${service.state}`;
 }
 
 function mailFor(
-  service: Service, kind: EventKind, incident: string, firstBad: number, observedAt: number, statusUrl?: string,
+  service: Service, kind: EventKind, incident: string, firstBad: number, observedAt: number,
+  last: ServiceState | undefined, state: string, since: number, statusUrl?: string,
 ) {
-  const id = `${incident}:${kind.toLowerCase()}`;
+  const suffix = kind === "CHANGED" ? `changed:${randomUUID()}` : kind.toLowerCase();
+  const id = `${incident}:${suffix}`;
   const iso = (ts: number) => new Date(ts).toISOString();
   const lines = [
     "schema: chain-sync-monitor/1",
@@ -62,10 +80,16 @@ function mailFor(
     `service: ${service.label}`,
     `network: ${service.network ?? "none"}`,
     `kind: ${service.kind}`,
-    `state: ${service.state}`,
+    `state: ${state}`,
+    `previous_state: ${last?.confirmed ?? (kind === "OPEN" ? "none" : "unknown")}`,
+    `probe_state: ${service.state}`,
+    `reason: ${reason(state, service)}`,
+    `state_observed_since: ${iso(since)}`,
     `first_bad_at: ${iso(firstBad)}`,
     `observed_at: ${iso(observedAt)}`,
     ...(service.syncTipLag === undefined ? [] : [`tip_lag_blocks: ${service.syncTipLag}`]),
+    ...(last?.confirmed === "reachable-but-lagging" && last.lag !== null && last.lag_at !== null
+      ? [`previous_tip_lag_blocks: ${last.lag}`, `previous_lag_observed_at: ${iso(last.lag_at)}`] : []),
     ...(statusUrl ? [`status_url: ${statusUrl}`] : []),
     "",
     "Probe details:",
@@ -75,6 +99,35 @@ function mailFor(
   return { id, subject: `[Monitor Alert] ${kind} ${service.id}`, text: lines.join("\n") };
 }
 
+function initialize(db: DatabaseSync) {
+  db.exec("BEGIN IMMEDIATE");
+  db.exec(`CREATE TABLE IF NOT EXISTS email_alert_outbox (
+    id TEXT PRIMARY KEY, service TEXT NOT NULL, subject TEXT NOT NULL, text TEXT NOT NULL,
+    created INTEGER NOT NULL, next_try INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+    finished INTEGER
+  ) STRICT`);
+  const legacy = db.prepare("PRAGMA table_info(email_alert_state)").all().some(col => col.name === "bad");
+  if (legacy) db.exec("ALTER TABLE email_alert_state RENAME TO email_alert_state_legacy");
+  db.exec(`CREATE TABLE IF NOT EXISTS email_alert_state (
+    service TEXT PRIMARY KEY, incident TEXT, confirmed TEXT, first_bad INTEGER,
+    candidate TEXT, since INTEGER NOT NULL, samples INTEGER NOT NULL, last_seen INTEGER, lag INTEGER, lag_at INTEGER
+  ) STRICT`);
+  if (legacy) {
+    // Old streaks did not distinguish fault types or verify recovery. Keep active incidents
+    // and recover the last confirmed fault from their OPEN event when it is still retained.
+    const insert = db.prepare(`INSERT INTO email_alert_state
+      (service, incident, confirmed, first_bad, since, samples) VALUES (?, ?, ?, ?, 0, 0)`);
+    for (const row of db.prepare(`SELECT s.service, s.incident, s.first_bad, o.text
+      FROM email_alert_state_legacy s LEFT JOIN email_alert_outbox o ON o.id = s.incident || ':open'
+      WHERE s.incident IS NOT NULL`).all()) {
+      const confirmed = String(row.text ?? "").split("\n\n")[0].match(/^state: (offline|degraded)$/m)?.[1];
+      insert.run(row.service, row.incident, confirmed ?? null, row.first_bad);
+    }
+    db.exec("DROP TABLE email_alert_state_legacy");
+  }
+  db.exec("COMMIT");
+}
+
 export class EmailAlerts {
   private sending?: Promise<void>;
   private initialized = false;
@@ -82,6 +135,7 @@ export class EmailAlerts {
     private readonly dbPath: string,
     private readonly config: EmailAlertsConfig,
     private readonly send = sendCloudflareEmail,
+    private readonly maxSampleGapMs = 45_000,
   ) {}
 
   private withDb<T>(operation: (db: DatabaseSync) => T) {
@@ -89,16 +143,7 @@ export class EmailAlerts {
     try {
       db.exec("PRAGMA busy_timeout = 1000;");
       if (!this.initialized) {
-        db.exec(`
-          CREATE TABLE IF NOT EXISTS email_alert_state (
-            service TEXT PRIMARY KEY, incident TEXT, bad INTEGER NOT NULL, good INTEGER NOT NULL, first_bad INTEGER
-          ) STRICT;
-          CREATE TABLE IF NOT EXISTS email_alert_outbox (
-            id TEXT PRIMARY KEY, service TEXT NOT NULL, subject TEXT NOT NULL, text TEXT NOT NULL,
-            created INTEGER NOT NULL, next_try INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
-            finished INTEGER
-          ) STRICT;
-        `);
+        initialize(db);
         this.initialized = true;
       }
       return operation(db);
@@ -109,39 +154,54 @@ export class EmailAlerts {
     const events = this.withDb(db => {
       const queued = [];
       db.exec("BEGIN IMMEDIATE;");
-      const read = db.prepare("SELECT incident, bad, good, first_bad FROM email_alert_state WHERE service = ?");
-      const save = db.prepare(`
-        INSERT INTO email_alert_state VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT (service) DO UPDATE SET incident=excluded.incident, bad=excluded.bad,
-          good=excluded.good, first_bad=excluded.first_bad
-      `);
+      const read = db.prepare("SELECT * FROM email_alert_state WHERE service = ?");
+      const save = db.prepare(`INSERT OR REPLACE INTO email_alert_state
+        (service, incident, confirmed, first_bad, candidate, since, samples, last_seen, lag, lag_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      const clear = db.prepare("DELETE FROM email_alert_state WHERE service = ?");
       const enqueue = db.prepare("INSERT INTO email_alert_outbox (id, service, subject, text, created, next_try) VALUES (?, ?, ?, ?, ?, ?)");
       for (const service of services) {
-        const state = read.get(service.id) as ServiceState | undefined;
-        const last = state ?? { incident: null, bad: 0, good: 0, first_bad: null };
-        let { incident, bad, good, first_bad: firstBad } = last;
-        const sample = observation(service);
-        let event: EventKind | undefined;
-        if (!incident) {
-          bad = sample === "bad" ? bad + 1 : 0;
-          firstBad = bad === 0 ? null : firstBad ?? now;
-          if (bad >= this.config.failureChecks) {
-            incident = randomUUID();
-            event = "OPEN";
+        const last = read.get(service.id) as ServiceState | undefined;
+        if (now === last?.last_seen) continue;
+        const sample = observation(service, this.config);
+        let incident = last?.incident ?? null, confirmed = last?.confirmed ?? null;
+        if (!incident && (!sample || sample === "healthy")) {
+          if (last) clear.run(service.id);
+          continue;
+        }
+        const timely = last && last.last_seen !== null && now > last.last_seen && now - last.last_seen <= this.maxSampleGapMs;
+        const same = timely && last.candidate === sample;
+        // Preserve OPEN on consecutive failures even if HTTP failure and transport failure alternate.
+        const continuingFailure = timely && !incident && (sample === "offline" || sample === "degraded")
+          && (last.candidate === "offline" || last.candidate === "degraded");
+        const since = same ? last.since : now;
+        const samples = same || continuingFailure ? last.samples + 1 : 1;
+        const firstBad = incident || continuingFailure ? last?.first_bad ?? since : since;
+        const recovering = sample === "healthy";
+        const checks = recovering ? Math.max(service.kind === "ckbadger" ? 2 : 1, this.config.recoveryChecks)
+          : this.config.failureChecks;
+        const sustained = sample !== "reachable-but-lagging" || (samples >= 2 && now - since >= this.config.lagSeconds * 1000);
+        if (sample && sample !== confirmed && samples >= checks && sustained) {
+          const event = recovering ? "RECOVERED" : incident ? "CHANGED" : "OPEN";
+          incident ??= randomUUID();
+          const state = recovering ? (service.kind === "ckbadger" ? "synced" : service.state) : sample;
+          // An old OPEN may have expired. Legacy faults were offline/degraded, so
+          // only a move to verified lag is certain until a new baseline is established.
+          const knownChange = confirmed !== null || sample === "reachable-but-lagging";
+          if (event !== "CHANGED" || (this.config.notifyChanges && knownChange)) {
+            const mail = mailFor(service, event, incident, firstBad, now, last, state, since, this.config.statusUrl);
+            enqueue.run(mail.id, service.id, mail.subject, mail.text, now, now);
+            queued.push({ event, event_id: mail.id, service_id: service.id, state });
           }
-        } else {
-          good = sample === "good" ? good + 1 : 0;
-          if (good >= this.config.recoveryChecks) event = "RECOVERED";
+          if (recovering) {
+            clear.run(service.id);
+            continue;
+          }
+          confirmed = sample;
         }
-        if (event && incident && firstBad !== null) {
-          const { id, subject, text } = mailFor(service, event, incident, firstBad, now, this.config.statusUrl);
-          enqueue.run(id, service.id, subject, text, now, now);
-          queued.push({ event, event_id: id, service_id: service.id, state: service.state });
-          if (event === "RECOVERED") { incident = null; bad = 0; good = 0; firstBad = null; }
-        }
-        if (incident !== last.incident || bad !== last.bad || good !== last.good || firstBad !== last.first_bad) {
-          save.run(service.id, incident, bad, good, firstBad);
-        }
+        const lagging = sample === "reachable-but-lagging";
+        save.run(service.id, incident, confirmed, firstBad, sample, since, samples, now,
+          lagging ? service.syncTipLag! : last?.lag ?? null, lagging ? now : last?.lag_at ?? null);
       }
       db.prepare("DELETE FROM email_alert_outbox WHERE finished < ?").run(now - retention);
       db.exec("COMMIT;");

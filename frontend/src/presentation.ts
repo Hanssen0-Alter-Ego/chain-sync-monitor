@@ -140,7 +140,7 @@ export function syncComparisons(service: Service): Comparison[] {
     }
     case "blockbook":
       return compare(height(service, "索引高度"), height(service, "配置的 Core 高度") ?? height(service, "Blockbook 上游高度"));
-    case "ckbadger": return compare(height(service, "索引高度"), height(service, "CKB 目标高度"));
+    case "ckbadger": return compare(height(service, "索引高度"), height(service, "已验证区块高度") ?? height(service, "CKB 目标高度"));
     case "spv": {
       const chain = height(service, "链上 SPV 高度") ?? height(service, "SPV 缓存的链上高度");
       const core = height(service, "本地 BTC 高度", "BTC Core 高度") ?? height(service, "SPV 观测的 BTC 高度");

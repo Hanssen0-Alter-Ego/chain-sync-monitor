@@ -247,6 +247,8 @@ test("built dashboard prioritizes both networks and preserves expanded rows acro
         total: i === 7 ? 480 : i === 10 ? 2 : i === 8 || i === 11 ? 1 : 0,
       })) : undefined},
   }));
+  services[4].syncTipLag = 1000;
+  services[4].availability.windows = [{seconds: 86_400, ratio: 1, available: 11, total: 11}];
   services.push(
     { id: "testnet3-http:btc-asset-api", network:"testnet3", kind:"http", label:"BTC Asset API", state:"online", probeAvailable:true,
       metrics:[{label:"HTTP 状态",value:200},{label:"响应时间",value:0}], availability:{windows:[]} },
@@ -286,6 +288,9 @@ test("built dashboard prioritizes both networks and preserves expanded rows acro
     assert.equal(card(3).querySelector(".sync-state").querySelector(".state-label").textContent, "Sync not verified");
     assert.equal(card(1).querySelector(".sync-state").dataset.state, "synced");
     assert.equal(card(2).querySelector(".sync-state").dataset.state, "syncing");
+    assert.equal(card(4).querySelector(".probe-state").querySelector(".state-label").textContent, "Online");
+    assert.equal(card(4).querySelector(".sync-state").dataset.state, "syncing");
+    assert.equal(card(4).querySelector(".service-uptime-value").textContent, "100%");
     const template = readFileSync(new URL("../dist/web/index.html", import.meta.url), "utf8");
     assert.match(readFileSync(new URL("../dist/web/style.css", import.meta.url), "utf8"), /\.card-network\[data-chain="mainnet"\] \{ color: var\(--error\); \}/);
     assert.doesNotMatch(template, /class="(?:network-code|eyebrow)"/);
@@ -456,6 +461,7 @@ test("built dashboard prioritizes both networks and preserves expanded rows acro
     listeners.get("languagechange")();
     assert.equal(document.documentElement.lang, "en");
     const beforeAllReady = card(2);
+    delete services[4].syncTipLag;
     for (const service of services) {
       service.state = service.kind === "http" ? "online" : "synced";
       service.probeAvailable = true;

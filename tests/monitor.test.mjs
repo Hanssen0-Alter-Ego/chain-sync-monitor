@@ -389,7 +389,7 @@ url="${upstream}/${["btc","ckb","book","explorer"][index]}"
   assert.equal(data.btc.bitcoinIndexes.txindex.state, "syncing");
   assert.equal(data.ckb.syncTipLag, 2, "compare indexer with known tip across both CKB legs");
   assert.equal(data.blockbook.syncTipLag, 1);
-  assert.equal(data.ckbadger.syncTipLag, 1);
+  assert.equal(data.ckbadger.syncTipLag, undefined, "CKB node has not verified its best known height");
   assert.equal(data.ckb.state, "syncing");
   assert.equal(data.blockbook.state, "syncing");
   initial = true;
@@ -787,4 +787,89 @@ url = "${url}"
 kind = "btc"
 url = "${url}"`);
   assert.throws(() => loadConfig(path), /network/);
+});
+
+test("CKBadger alert evidence needs a fresh same-network CKB tip and an incremental index", async t => {
+  let now = Date.now();
+  t.mock.method(Date, "now", () => now);
+  const genesis = "0x92b197aa1fba0f63633922c61c92375c9c074a93e85963554f5499fe1450d0e5";
+  const tipHash = "0x" + "a".repeat(64), indexHash = "0x" + "b".repeat(64);
+  let genesisReply = genesis, indexedReply = indexHash, age = 0, tipAge = 0, ibd = false;
+  let best = 100, indexerHash = tipHash, initializing = false, omitTip = false;
+  const syncStatus = { syncedBlock: 98, tipBlock: 98, syncMode: "synced", isSyncing: false };
+  const stats = { latestBlock: 98, latestBlockHash: indexHash, syncStatus };
+  const upstream = await listen(t, createServer(async (req, res) => {
+    if (req.url === "/stats") {
+      if (initializing) return json(res, {error: "initializing"}, 503);
+      res.setHeader("Date", new Date(now).toUTCString());
+      res.setHeader("Age", String(age));
+      return json(res, stats);
+    }
+    const {method, params} = await payload(req);
+    if (method === "get_block_hash") return json(res, reply(params[0] === "0x0" ? genesisReply : indexedReply));
+    if (method === "get_indexer_tip") return json(res, reply({block_number: "0x64", block_hash: indexerHash}));
+    if (method === "sync_state") return json(res, reply({
+      ibd, tip_number: omitTip ? undefined : "0x64", tip_hash: tipHash, best_known_block_number: best,
+      best_known_block_timestamp: Date.now() - tipAge,
+    }));
+    res.writeHead(404).end();
+  }));
+  const path = join(directory(t), "monitor.toml");
+  writeFileSync(path, ["ckb", "ckbadger"].map(kind =>
+    `[[groups.reference.services]]\nkind = "${kind}"\nnetwork = "mainnet"\nurl = "${upstream}/${kind === "ckb" ? "rpc" : "stats"}"\n`
+  ).join(""));
+  const cfg = loadConfig(path);
+  const localFetch = globalThis.fetch;
+  const sent = [];
+  cfg.emailAlerts = {
+    accountId: "1".repeat(32), apiToken: "mock", from: "monitor@example.test", to: "alerts@example.test",
+    lagBlocks: 2, lagSeconds: 300, failureChecks: 3, recoveryChecks: 2, notifyChanges: true,
+  };
+  t.mock.method(globalThis, "fetch", async (_url, init) => {
+    sent.push(JSON.parse(init.body));
+    return Response.json({success: true, result: {queued: [cfg.emailAlerts.to]}});
+  });
+  const monitor = new Monitor(cfg, new HistoryStore(cfg.historyPath));
+  const base = await listen(t, makeServer(cfg, () => monitor.snapshot));
+  const check = async (lag, available = true) => {
+    now += 30_000;
+    await monitor.poll();
+    const {services} = await (await localFetch(base + "/api/status")).json();
+    const badger = services.find(s => s.kind === "ckbadger");
+    assert.equal(badger.probeAvailable, available);
+    assert.equal(badger.syncTipLag, lag);
+    return badger;
+  };
+  assert.equal((await check(2)).state, "syncing", "self-reported synced while both local heights trail CKB");
+  for (let i = 1; i < 10; i++) await check(2);
+  assert.equal(sent.length, 0);
+  const confirmed = await check(2);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].text, /event: OPEN\n/);
+  assert.match(sent[0].text, /state: reachable-but-lagging\n/);
+  assert.equal(confirmed.probeAvailable, true);
+  assert.deepEqual(confirmed.availability.windows.map(w => [w.available, w.total, w.ratio]), [[11, 11, 1], [11, 11, 1]]);
+  const db = new DatabaseSync(cfg.historyPath);
+  try {
+    const counts = db.prepare("SELECT SUM(available) up, SUM(total) total FROM availability_by_minute WHERE service=?").get(confirmed.id);
+    assert.deepEqual([counts.up, counts.total], [11, 11]);
+  } finally { db.close(); }
+  stats.network = "testnet"; await check(undefined); delete stats.network;
+  genesisReply = "0x" + "0".repeat(64); await check(undefined); genesisReply = genesis;
+  indexedReply = tipHash; await check(undefined); indexedReply = indexHash;
+  indexerHash = indexHash; await check(undefined); indexerHash = tipHash;
+  best = 101; await check(undefined); best = 100;
+  ibd = true; await check(undefined); ibd = false;
+  tipAge = 301_000; await check(undefined); tipAge = 0;
+  omitTip = true; await check(undefined); omitTip = false;
+  age = 301; await check(undefined); age = 0;
+  initializing = true; await check(undefined, false); initializing = false;
+  syncStatus.syncMode = "bulk"; await check(undefined);
+  delete syncStatus.syncMode; await check(undefined);
+  syncStatus.syncMode = "synced";
+  syncStatus.syncedBlock = stats.latestBlock = 99;
+  syncStatus.tipBlock = 101; await check(undefined); // Self target suggests >1 behind despite reference gap of 1.
+  syncStatus.tipBlock = 100; await check(1);
+  stats.latestBlock = 98; await check(undefined);
+  delete syncStatus.syncedBlock; await check(undefined, false);
 });
